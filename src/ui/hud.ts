@@ -1,0 +1,85 @@
+// NEW: DOM HUD overlay (crosshair, hotbar, debug readout, pointer-lock prompt).
+// Nothing here is ported -- the source repo's UI is React/Zustand-driven and
+// doesn't separate out cleanly.
+
+import { BType } from "../world/types";
+import { HOTBAR } from "../player/Controller";
+
+const BLOCK_COLORS: Record<BType, string> = {
+  [BType.air]: "transparent",
+  [BType.grass]: "#5f9e3d",
+  [BType.dirt]: "#755233",
+  [BType.stone]: "#7d7d82",
+  [BType.sand]: "#dfd091",
+  [BType.snow]: "#f0f5fa",
+  [BType.log]: "#5c3f28",
+  [BType.leaf]: "#2d6e2d",
+  [BType.planks]: "#b08a54",
+  [BType.water]: "#3a6ec4",
+};
+
+export interface Hud {
+  setSelected(index: number): void;
+  setDebugText(text: string): void;
+  showPrompt(show: boolean): void;
+}
+
+export function createHud(container: HTMLElement): Hud {
+  const root = document.createElement("div");
+  root.style.cssText = "position:fixed;inset:0;pointer-events:none;font-family:monospace;color:#fff;user-select:none;";
+  container.appendChild(root);
+
+  const crosshair = document.createElement("div");
+  crosshair.style.cssText = `
+    position:absolute;top:50%;left:50%;width:14px;height:14px;
+    transform:translate(-50%,-50%);
+  `;
+  crosshair.innerHTML = `
+    <div style="position:absolute;top:6px;left:0;width:14px;height:2px;background:#fff;box-shadow:0 0 2px #000;"></div>
+    <div style="position:absolute;top:0;left:6px;width:2px;height:14px;background:#fff;box-shadow:0 0 2px #000;"></div>
+  `;
+  root.appendChild(crosshair);
+
+  const debugText = document.createElement("div");
+  debugText.style.cssText = "position:absolute;top:8px;left:8px;font-size:12px;line-height:1.4;text-shadow:0 0 3px #000;white-space:pre;";
+  root.appendChild(debugText);
+
+  const hotbar = document.createElement("div");
+  hotbar.style.cssText = "position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:4px;";
+  root.appendChild(hotbar);
+
+  const slots: HTMLDivElement[] = HOTBAR.map((block, i) => {
+    const slot = document.createElement("div");
+    slot.style.cssText = `
+      width:40px;height:40px;border:2px solid rgba(255,255,255,0.4);
+      background:${BLOCK_COLORS[block]};display:flex;align-items:flex-end;
+      justify-content:flex-end;font-size:10px;padding:2px;box-sizing:border-box;
+      text-shadow:0 0 2px #000;
+    `;
+    slot.textContent = String(i + 1);
+    hotbar.appendChild(slot);
+    return slot;
+  });
+
+  const prompt = document.createElement("div");
+  prompt.style.cssText = `
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,0.4);font-size:20px;text-align:center;
+  `;
+  prompt.innerHTML = `Click to play<br/><span style="font-size:13px;opacity:0.8;">WASD move · Space jump · Shift sprint · Left click break · Right click place · 1-8 hotbar</span>`;
+  root.appendChild(prompt);
+
+  function setSelected(index: number) {
+    slots.forEach((s, i) => {
+      s.style.borderColor = i === index ? "#fff" : "rgba(255,255,255,0.4)";
+      s.style.boxShadow = i === index ? "0 0 8px #fff" : "none";
+    });
+  }
+  setSelected(0);
+
+  return {
+    setSelected,
+    setDebugText: (text: string) => { debugText.textContent = text; },
+    showPrompt: (show: boolean) => { prompt.style.display = show ? "flex" : "none"; },
+  };
+}
