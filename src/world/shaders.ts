@@ -1,10 +1,3 @@
-// Adapted from escape-tsuami-client/src/game/map/Chunk/shaders.ts.
-// Trimmed: dropped the USE_LIGHTING (torch) and USE_MODIFIED (mining-vertex
-// overlay) preprocessor branches, which this project has no use for. Kept:
-// packed-vertex unpacking, per-vertex AO shading, greedy-quad UV scaling,
-// chunk-position texture lookup (so all chunks share one draw call), and the
-// day/night sky tint used by the fragment shader.
-
 export const vsChunk = `
 layout (location = 0) in uint packed_data;
 layout (location = 1) in uint packed_greedy;
@@ -24,6 +17,7 @@ out float shading;
 out vec2 vuv;
 flat out int tex_id;
 flat out int vertex_id;
+out vec2 vWorldXZ;
 
 const float face_shading[6] = float[6](
     1.0, 0.7,
@@ -31,14 +25,6 @@ const float face_shading[6] = float[6](
     0.7, 0.9
 );
 
-// Floor raised from the source's (0.15, 0.35, 0.5, 1.0): this shader has no
-// real lights (scene AmbientLight/DirectionalLight don't reach a custom
-// ShaderMaterial), so shading is entirely face_shading * ao_values * dayLight.
-// At 0.15 the innermost corners of narrow terrain crevices (this world's
-// heightmap has no caves, but steep noise can still carve 1-2 block slot
-// canyons between adjacent columns) multiplied against a 0.7 side-face
-// factor land near 0.1 brightness -- reads as solid black on screen, easily
-// mistaken for a missing-geometry hole even though the mesh is intact.
 const float ao_values[4] = float[4](0.45, 0.6, 0.75, 1.0);
 
 vec2 uv_coords[4] = vec2[4](
@@ -99,6 +85,9 @@ void main() {
     vec3 chunkWorldPos = texelFetch(uChunkPositions, ivec2(int(chunk_id), 0), 0).xyz;
     in_position += chunkWorldPos;
 
+    // World XZ passed to fragment shader for per-pixel biome color
+    vWorldXZ = vec2(in_position.x, in_position.z);
+
     vec4 posView = modelViewMatrix * vec4(in_position, 1.0);
 
     vec3 dir = normalize(in_position - playerPos);
@@ -114,12 +103,97 @@ flat in int face_id;
 uniform sampler2DArray uTextureArray;
 in vec2 vuv;
 flat in int tex_id;
+in vec2 vWorldXZ;
 
 uniform float timeOfDay;
 
-in float vY;
-
 out vec4 fragColor;
+
+// Tex layer indices — must match the Tex enum in blockTextures.ts
+const int TEX_GRASS_TOP        = 0;
+const int TEX_GRASS_SIDE       = 1;
+const int TEX_LEAF             = 8;
+const int TEX_CHERRY_LEAF      = 20;
+const int TEX_LEAF_SOLID       = 21; // inner leaf face — same RGB, alpha forced to 1
+const int TEX_CHERRY_LEAF_SOLID= 22;
+
+// ---------------------------------------------------------------------------
+// Value noise — integer hash, no lookup tables, works for any world position.
+// Two independent seeds for temperature (2u) and humidity (3u), matching the
+// offset pattern used in terrain.ts (SEED+2, SEED+3).
+// ---------------------------------------------------------------------------
+float hash2(uvec2 q, uint seed) {
+    q += seed;
+    q *= uvec2(1597334673u, 3812015801u);
+    uint n = (q.x ^ q.y) * 2246822519u;
+    n ^= n >> 13u;
+    return float(n >> 8u) / 16777216.0; // [0, 1)
+}
+
+float valueNoise(vec2 p, uint seed) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f); // smoothstep
+    uvec2 iq = uvec2(ivec2(i));
+    float a = hash2(iq,                  seed);
+    float b = hash2(iq + uvec2(1u, 0u),  seed);
+    float c = hash2(iq + uvec2(0u, 1u),  seed);
+    float d = hash2(iq + uvec2(1u, 1u),  seed);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0; // [-1, 1]
+}
+
+// ---------------------------------------------------------------------------
+// Mineways barycentric grass color from temperature + rainfall.
+// Corners match biomes.cpp exactly.
+// ---------------------------------------------------------------------------
+vec3 barycentricGrass(float temp, float humid) {
+    float t = clamp(temp  * 0.5 + 0.5, 0.0, 1.0);
+    float r = clamp(humid * 0.5 + 0.5, 0.0, 1.0) * t; // rainfall *= temperature
+    float l0 = t - r;
+    float l1 = 1.0 - t;
+    float l2 = r;
+    vec3 c0 = vec3(191.0, 183.0,  85.0) / 255.0; // warm/dry
+    vec3 c1 = vec3(128.0, 180.0, 151.0) / 255.0; // cool
+    vec3 c2 = vec3( 71.0, 205.0,  51.0) / 255.0; // wet/lush
+    return clamp(l0 * c0 + l1 * c1 + l2 * c2, 0.0, 1.0);
+}
+
+vec3 barycentricFoliage(float temp, float humid) {
+    float t = clamp(temp  * 0.5 + 0.5, 0.0, 1.0);
+    float r = clamp(humid * 0.5 + 0.5, 0.0, 1.0) * t;
+    float l0 = t - r;
+    float l1 = 1.0 - t;
+    float l2 = r;
+    vec3 c0 = vec3(174.0, 164.0,  42.0) / 255.0;
+    vec3 c1 = vec3( 96.0, 161.0, 123.0) / 255.0;
+    vec3 c2 = vec3( 26.0, 191.0,   0.0) / 255.0;
+    return clamp(l0 * c0 + l1 * c1 + l2 * c2, 0.0, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Biome weights — mirrors terrain.ts getBiomeWeights logic.
+// ---------------------------------------------------------------------------
+void getBiomeInfo(vec2 wxz, out float temp, out float humid, out float sakW) {
+    temp  = valueNoise(wxz * 0.0018, 2u);
+    humid = valueNoise(wxz * 0.0022, 3u);
+    float rawSak = max(0.0, -temp)  * max(0.0,  humid) * 4.0;
+    float rawDes = max(0.0,  temp)  * max(0.0, -humid) * 4.0;
+    sakW = rawSak / (rawSak + rawDes + 1.0);
+}
+
+vec3 biomeGrassColor(vec2 wxz) {
+    float temp, humid, sakW;
+    getBiomeInfo(wxz, temp, humid, sakW);
+    vec3 base = barycentricGrass(temp, humid);
+    vec3 cherryGrass = vec3(182.0, 219.0, 97.0) / 255.0; // Cherry Grove #B6DB61
+    return mix(base, cherryGrass, sakW);
+}
+
+vec3 biomeFoliageColor(vec2 wxz) {
+    float temp, humid, sakW;
+    getBiomeInfo(wxz, temp, humid, sakW);
+    return barycentricFoliage(temp, humid);
+}
 
 float getTimeLighting(float timeOfDay) {
     float angle = timeOfDay * 6.2831853;
@@ -129,6 +203,29 @@ float getTimeLighting(float timeOfDay) {
 
 void main() {
     vec4 color = texture(uTextureArray, vec3(vuv, tex_id));
+
+    if (tex_id == TEX_GRASS_TOP) {
+        // grass_top.png is grayscale — multiply by per-pixel biome grass color
+        color.rgb *= biomeGrassColor(vWorldXZ);
+    } else if (tex_id == TEX_GRASS_SIDE) {
+        // grass_side.tga: alpha channel marks the green strip (1=tintable, 0=dirt).
+        // Tint only the green strip; dirt pixels pass through unchanged.
+        vec3 biomeColor = biomeGrassColor(vWorldXZ);
+        color.rgb = mix(color.rgb, color.rgb * biomeColor, color.a);
+        color.a = 1.0;
+    } else if (tex_id == TEX_LEAF) {
+        color.rgb *= biomeFoliageColor(vWorldXZ);
+        // keep TGA alpha → outer faces are alpha-tested by the discard below
+    } else if (tex_id == TEX_LEAF_SOLID) {
+        color.rgb *= biomeFoliageColor(vWorldXZ);
+        color.a = 1.0; // inner leaf face — always solid
+    } else if (tex_id == TEX_CHERRY_LEAF) {
+        color.rgb *= vec3(1.0, 0.55, 0.72);
+        // keep TGA alpha → outer faces are alpha-tested
+    } else if (tex_id == TEX_CHERRY_LEAF_SOLID) {
+        color.rgb *= vec3(1.0, 0.55, 0.72);
+        color.a = 1.0; // inner leaf face — always solid
+    }
 
     color.rgb *= shading;
 

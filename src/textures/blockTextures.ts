@@ -1,182 +1,117 @@
-// NEW: procedural block textures. The source repo fetches real Minecraft-style
-// PNGs (textures/blocks/*.png) from a remote asset API (logic/preload/config/objects.ts)
-// that isn't available here, so instead we bake small canvas-drawn textures into
-// a THREE.DataArrayTexture at startup -- same shape as the original pipeline
-// (one layer per texture, sampled by tex_id in the fragment shader) but fully
-// self-contained.
-
 import * as THREE from "three";
 import { BType } from "../world/types";
 import type { BlockDef } from "../world/chunkMesh.worker";
+import { loadTGA } from "./tgaLoader";
 
 const TILE = 16;
 
-// Layer indices into the DataArrayTexture.
 const enum Tex {
-  grassTop = 0,
-  grassSide = 1,
-  dirt = 2,
-  stone = 3,
-  sand = 4,
-  snow = 5,
-  logSide = 6,
-  logTop = 7,
-  leaf = 8,
-  planks = 9,
-  water = 10,
+  grassTop    = 0,
+  grassSide   = 1,
+  dirt        = 2,
+  stone       = 3,
+  sand        = 4,
+  snow        = 5,
+  logSide     = 6,
+  logTop      = 7,
+  leaf        = 8,
+  planks      = 9,
+  water       = 10,
+  coalOre     = 11,
+  ironOre     = 12,
+  goldOre     = 13,
+  diamondOre  = 14,
+  emeraldOre  = 15,
+  lapisOre    = 16,
+  redstoneOre   = 17,
+  snowGrassTop  = 18,
+  snowGrassSide = 19,
+  cherryLeaf    = 20,
+  // Solid (alpha=255) variants for inner leaf faces (leaf-vs-leaf boundaries).
+  // Same RGB as leaf/cherryLeaf but never discarded by the alpha-test in the shader.
+  leafSolid       = 21,
+  cherryLeafSolid = 22,
 }
-const LAYER_COUNT = 11;
+const LAYER_COUNT = 23;
 
-function mulberry32(seed: number) {
-  return function () {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function speckle(
-  ctx: CanvasRenderingContext2D,
-  base: [number, number, number],
-  variance: number,
-  seed: number,
-) {
-  const rand = mulberry32(seed);
-  const img = ctx.getImageData(0, 0, TILE, TILE);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const n = (rand() - 0.5) * 2 * variance;
-    img.data[i] = clamp8(base[0] + n);
-    img.data[i + 1] = clamp8(base[1] + n);
-    img.data[i + 2] = clamp8(base[2] + n);
-    img.data[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-}
-
-function clamp8(v: number) {
-  return Math.max(0, Math.min(255, Math.round(v)));
-}
-
-function makeCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
-  const c = document.createElement("canvas");
-  c.width = TILE;
-  c.height = TILE;
-  const ctx = c.getContext("2d")!;
-  return [c, ctx];
-}
-
-function drawGrassTop(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [86, 158, 61], 18, 1);
-  return ctx;
-}
-
-function drawGrassSide(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [117, 82, 51], 14, 2);
-  ctx.fillStyle = "#5f9e3d";
-  ctx.fillRect(0, 0, TILE, 4);
-  for (let x = 0; x < TILE; x += 2) {
-    const h = 3 + Math.floor(mulberry32(x + 100)() * 2);
-    ctx.fillRect(x, 3, 2, h - 3);
-  }
-  return ctx;
-}
-
-function drawDirt(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [117, 82, 51], 16, 3);
-  return ctx;
-}
-
-function drawStone(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [125, 125, 130], 14, 4);
-  return ctx;
-}
-
-function drawSand(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [223, 208, 145], 10, 5);
-  return ctx;
-}
-
-function drawSnow(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [240, 245, 250], 8, 6);
-  return ctx;
-}
-
-function drawLogSide(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [92, 63, 40], 8, 7);
-  ctx.strokeStyle = "rgba(60,40,25,0.6)";
-  for (let x = 1; x < TILE; x += 4) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, TILE);
-    ctx.stroke();
-  }
-  return ctx;
-}
-
-function drawLogTop(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [196, 158, 105], 8, 8);
-  ctx.strokeStyle = "rgba(120,90,55,0.7)";
-  const cx = TILE / 2, cy = TILE / 2;
-  for (let r = 2; r < TILE; r += 3) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  return ctx;
-}
-
-function drawLeaf(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [45, 110, 45], 22, 9);
-  return ctx;
-}
-
-function drawPlanks(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [176, 138, 84], 10, 10);
-  ctx.strokeStyle = "rgba(110,80,45,0.5)";
-  for (let y = 3; y < TILE; y += 4) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(TILE, y);
-    ctx.stroke();
-  }
-  return ctx;
-}
-
-function drawWater(): CanvasRenderingContext2D {
-  const [, ctx] = makeCanvas();
-  speckle(ctx, [58, 110, 196], 10, 11);
-  return ctx;
-}
+const TEXTURE_FILES: Record<Tex, string> = {
+  [Tex.grassTop]:  "/textures/blocks/grass_top.png", // grayscale — tinted in shader
+  [Tex.grassSide]: "",                              // loaded from grass_side.tga (alpha = biome tint mask)
+  [Tex.dirt]:      "/textures/blocks/dirt.png",
+  [Tex.stone]:     "/textures/blocks/stone.png",
+  [Tex.sand]:      "/textures/blocks/sand.png",
+  [Tex.snow]:      "/textures/blocks/snow.png",
+  [Tex.logSide]:   "/textures/blocks/log_oak.png",
+  [Tex.logTop]:    "/textures/blocks/log_oak_top.png",
+  [Tex.leaf]:      "", // loaded separately as TGA
+  [Tex.planks]:    "/textures/blocks/planks_oak.png",
+  [Tex.water]:       "/textures/blocks/water_still.png",
+  [Tex.coalOre]:     "/textures/blocks/coal_ore.png",
+  [Tex.ironOre]:     "/textures/blocks/iron_ore.png",
+  [Tex.goldOre]:     "/textures/blocks/gold_ore.png",
+  [Tex.diamondOre]:  "/textures/blocks/diamond_ore.png",
+  [Tex.emeraldOre]:  "/textures/blocks/emerald_ore.png",
+  [Tex.lapisOre]:    "/textures/blocks/lapis_ore.png",
+  [Tex.redstoneOre]:   "/textures/blocks/redstone_ore.png",
+  [Tex.snowGrassTop]:  "/textures/blocks/grass_block_snow.png",
+  [Tex.snowGrassSide]: "/textures/blocks/grass_side_snowed.png",
+  [Tex.cherryLeaf]:        "", // loaded from same TGA as Tex.leaf
+  [Tex.leafSolid]:         "", // loaded from same TGA — alpha forced to 255
+  [Tex.cherryLeafSolid]:   "", // loaded from same TGA — alpha forced to 255
+};
 
 export interface BlockTextureAtlas {
   texture: THREE.DataArrayTexture;
   blockDefs: Record<number, BlockDef>;
 }
 
-export function buildBlockTextureAtlas(): BlockTextureAtlas {
-  const draws = [
-    drawGrassTop, drawGrassSide, drawDirt, drawStone, drawSand, drawSnow,
-    drawLogSide, drawLogTop, drawLeaf, drawPlanks, drawWater,
-  ];
-
-  const data = new Uint8Array(TILE * TILE * 4 * LAYER_COUNT);
-  draws.forEach((draw, layer) => {
-    const ctx = draw();
-    const img = ctx.getImageData(0, 0, TILE, TILE);
-    data.set(img.data, layer * TILE * TILE * 4);
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
   });
+}
+
+function drawImageToLayer(img: HTMLImageElement, data: Uint8Array, layer: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = TILE;
+  canvas.height = TILE;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, 0, 0, TILE, TILE);
+  const pixels = ctx.getImageData(0, 0, TILE, TILE);
+  data.set(pixels.data, layer * TILE * TILE * 4);
+}
+
+export async function buildBlockTextureAtlas(): Promise<BlockTextureAtlas> {
+  const data = new Uint8Array(TILE * TILE * 4 * LAYER_COUNT);
+
+  await Promise.all([
+    // PNG layers
+    ...(Object.entries(TEXTURE_FILES) as [string, string][])
+      .filter(([, src]) => src !== "")
+      .map(async ([layerStr, src]) => {
+        const layer = Number(layerStr) as Tex;
+        const img = await loadImage(src);
+        drawImageToLayer(img, data, layer);
+      }),
+    // TGA: grass side — RGB is the texture, alpha marks the biome-tintable green strip
+    loadTGA("/textures/blocks/grass_side.tga").then(({ data: px }) => {
+      data.set(px.subarray(0, TILE * TILE * 4), Tex.grassSide * TILE * TILE * 4);
+    }),
+    // TGA leaf — outer faces use original alpha (transparent); inner leaf-vs-leaf
+    // faces use the solid variant (alpha forced to 255, same RGB).
+    loadTGA("/textures/blocks/leaves_oak.tga").then(({ data: px }) => {
+      const leafPx = px.subarray(0, TILE * TILE * 4);
+      data.set(leafPx, Tex.leaf       * TILE * TILE * 4);
+      data.set(leafPx, Tex.cherryLeaf * TILE * TILE * 4);
+      const solidPx = leafPx.slice();
+      for (let i = 3; i < solidPx.length; i += 4) solidPx[i] = 255;
+      data.set(solidPx, Tex.leafSolid       * TILE * TILE * 4);
+      data.set(solidPx, Tex.cherryLeafSolid * TILE * TILE * 4);
+    }),
+  ]);
 
   const texture = new THREE.DataArrayTexture(data, TILE, TILE, LAYER_COUNT);
   texture.format = THREE.RGBAFormat;
@@ -189,15 +124,24 @@ export function buildBlockTextureAtlas(): BlockTextureAtlas {
   texture.needsUpdate = true;
 
   const blockDefs: Record<number, BlockDef> = {
-    [BType.grass]: { sides: [Tex.grassTop, Tex.dirt, Tex.grassSide, Tex.grassSide, Tex.grassSide, Tex.grassSide] },
-    [BType.dirt]: { sides: Array(6).fill(Tex.dirt) },
-    [BType.stone]: { sides: Array(6).fill(Tex.stone) },
-    [BType.sand]: { sides: Array(6).fill(Tex.sand) },
-    [BType.snow]: { sides: [Tex.snow, Tex.dirt, Tex.snow, Tex.snow, Tex.snow, Tex.snow] },
-    [BType.log]: { sides: [Tex.logTop, Tex.logTop, Tex.logSide, Tex.logSide, Tex.logSide, Tex.logSide] },
-    [BType.leaf]: { sides: Array(6).fill(Tex.leaf), isTransparent: true },
-    [BType.planks]: { sides: Array(6).fill(Tex.planks) },
-    [BType.water]: { sides: Array(6).fill(Tex.water), isTransparent: true },
+    [BType.grass]:  { sides: [Tex.grassTop, Tex.dirt, Tex.grassSide, Tex.grassSide, Tex.grassSide, Tex.grassSide] },
+    [BType.dirt]:   { sides: Array(6).fill(Tex.dirt) },
+    [BType.stone]:  { sides: Array(6).fill(Tex.stone) },
+    [BType.sand]:   { sides: Array(6).fill(Tex.sand) },
+    [BType.snow]:   { sides: [Tex.snow, Tex.dirt, Tex.snowGrassSide, Tex.snowGrassSide, Tex.snowGrassSide, Tex.snowGrassSide] },
+    [BType.log]:    { sides: [Tex.logTop, Tex.logTop, Tex.logSide, Tex.logSide, Tex.logSide, Tex.logSide] },
+    [BType.leaf]:   { sides: Array(6).fill(Tex.leaf), isTransparent: true, isLeaf: true, solidSides: Array(6).fill(Tex.leafSolid) },
+    [BType.planks]:       { sides: Array(6).fill(Tex.planks) },
+    [BType.water]:        { sides: Array(6).fill(Tex.water), isTransparent: true, topFaceOnly: true },
+    [BType.coal_ore]:     { sides: Array(6).fill(Tex.coalOre) },
+    [BType.iron_ore]:     { sides: Array(6).fill(Tex.ironOre) },
+    [BType.gold_ore]:     { sides: Array(6).fill(Tex.goldOre) },
+    [BType.diamond_ore]:  { sides: Array(6).fill(Tex.diamondOre) },
+    [BType.emerald_ore]:  { sides: Array(6).fill(Tex.emeraldOre) },
+    [BType.lapis_ore]:    { sides: Array(6).fill(Tex.lapisOre) },
+    [BType.redstone_ore]: { sides: Array(6).fill(Tex.redstoneOre) },
+    [BType.cherry_log]:  { sides: [Tex.logTop, Tex.logTop, Tex.logSide, Tex.logSide, Tex.logSide, Tex.logSide] },
+    [BType.cherry_leaf]: { sides: Array(6).fill(Tex.cherryLeaf), isTransparent: true, isLeaf: true, solidSides: Array(6).fill(Tex.cherryLeafSolid) },
   };
 
   return { texture, blockDefs };

@@ -22,6 +22,9 @@ const FACE_DEFS = [
 export interface BlockDef {
   sides: number[]; // [top, bottom, +x, -x, -z, +z] texture-array layer indices
   isTransparent?: boolean;
+  topFaceOnly?: boolean; // only emit the top (y+) face — used for water surface
+  isLeaf?: boolean;      // emit leaf-vs-leaf faces as solid (uses solidSides texIds)
+  solidSides?: number[]; // texIds for inner leaf faces (alpha=255 variant)
 }
 
 export interface InChunkMeshWorker {
@@ -31,6 +34,8 @@ export interface InChunkMeshWorker {
   chunkBlocks: ArrayBuffer;
   /** Uint8Array[(S+4)^3], 1 = void/transparent, base = chunk origin - 2 */
   voidMap: ArrayBuffer;
+  /** Uint8Array[(S+4)^3], 1 = leaf block at this position (for solid inner-face detection) */
+  leafMap: ArrayBuffer;
   blockDefs: Record<number, BlockDef>;
 }
 
@@ -103,6 +108,7 @@ self.onmessage = (e: MessageEvent<InChunkMeshWorker>) => {
   const { chunkKey, slotId, blockDefs } = e.data;
   const chunkBlocks = new Uint16Array(e.data.chunkBlocks);
   const voidMap = new Uint8Array(e.data.voidMap);
+  const leafMap = new Uint8Array(e.data.leafMap);
 
   const baseX = -2;
   const baseY = -2;
@@ -115,6 +121,15 @@ self.onmessage = (e: MessageEvent<InChunkMeshWorker>) => {
     const vz = lz - baseZ;
     if (vx < 0 || vy < 0 || vz < 0 || vx >= SP || vy >= SP || vz >= SP) return 1;
     return voidMap[vx + vy * SP + vz * SP * SP];
+  };
+
+  /** 1 = leaf block (cross-chunk inner-face detection) */
+  const leafAt = (lx: number, ly: number, lz: number): number => {
+    const vx = lx - baseX;
+    const vy = ly - baseY;
+    const vz = lz - baseZ;
+    if (vx < 0 || vy < 0 || vz < 0 || vx >= SP || vy >= SP || vz >= SP) return 0;
+    return leafMap[vx + vy * SP + vz * SP * SP];
   };
 
   const getChunkBlock = (lx: number, ly: number, lz: number): number => {
@@ -160,17 +175,33 @@ self.onmessage = (e: MessageEvent<InChunkMeshWorker>) => {
           const blockId = getChunkBlock(lx, ly, lz);
           if (!blockId || !blockDefs[blockId]) continue;
 
+          const def = blockDefs[blockId];
+          // topFaceOnly blocks (water) only emit their top face
+          if (def.topFaceOnly && faceId !== 0) continue;
+
           const nlx = lx + nx, nly = ly + ny, nlz = lz + nz;
           let neighborVoid: number;
+          let innerLeaf = false; // true → use solidSides texId
           if (nlx >= 0 && nly >= 0 && nlz >= 0 && nlx < S && nly < S && nlz < S) {
             const nid = getChunkBlock(nlx, nly, nlz);
-            neighborVoid = (!nid || !blockDefs[nid] || blockDefs[nid].isTransparent) ? 1 : 0;
+            if (def.isLeaf && blockDefs[nid]?.isLeaf) {
+              // Leaf-vs-leaf (any type): emit as solid inner face
+              neighborVoid = 1;
+              innerLeaf = true;
+            } else if (nid === blockId) {
+              neighborVoid = 0; // same-type cull (water-above-water etc.)
+            } else {
+              neighborVoid = (!nid || !blockDefs[nid] || blockDefs[nid].isTransparent) ? 1 : 0;
+            }
           } else {
             neighborVoid = voidAt(lx + nx, ly + ny, lz + nz);
+            if (neighborVoid && def.isLeaf && leafAt(lx + nx, ly + ny, lz + nz)) {
+              innerLeaf = true; // cross-chunk leaf neighbour → solid inner face
+            }
           }
           if (!neighborVoid) continue;
 
-          const sides = blockDefs[blockId].sides;
+          const sides = def.isLeaf && innerLeaf && def.solidSides ? def.solidSides : blockDefs[blockId].sides;
           const texId = sides[texSlot] ?? 0;
           const ao = getAO(lx + nx, ly + ny, lz + nz, plane);
 

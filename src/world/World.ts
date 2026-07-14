@@ -23,9 +23,11 @@ import { BType } from "./types";
 import { generateColumn, surfaceHeight, TREE_HEIGHT } from "./terrain";
 import { ChunkMegaBuffer } from "./ChunkMegaBuffer";
 import { vsChunk, fsChunk } from "./shaders";
-import { buildBlockTextureAtlas } from "../textures/blockTextures";
+import type { BlockTextureAtlas } from "../textures/blockTextures";
 import type { InChunkMeshWorker, OutChunkMeshWorker } from "./chunkMesh.worker";
 import ChunkMeshWorker from "./chunkMesh.worker?worker";
+import type { InTerrainWorker, OutTerrainWorker } from "./terrainGen.worker";
+import TerrainGenWorker from "./terrainGen.worker?worker";
 
 const S = CHUNK_SIZE;
 const SP = S + 4;
@@ -56,7 +58,7 @@ export class World {
   readonly material: THREE.ShaderMaterial;
 
   private readonly megaBuf = new ChunkMegaBuffer();
-  private readonly atlas = buildBlockTextureAtlas();
+  private readonly atlas: BlockTextureAtlas;
 
   private readonly terrainColumns = new Map<string, Uint16Array>();
   private readonly edits = new Map<string, BType>();
@@ -79,11 +81,26 @@ export class World {
   private nextWorker = 0;
   private readonly inFlight = new Set<string>();
 
+  // Terrain generation worker — runs generateColumn off the main thread so
+  // chunk loading never blocks the render loop.
+  private readonly terrainWorker: Worker;
+  private terrainJobCounter = 0;
+  // jobId → column key of the chunk column waiting on this job
+  private readonly terrainJobs = new Map<number, string>();
+
   private startChunkX = 0;
   private startChunkZ = 0;
   private loadQueue: { cx: number; cz: number; dist: number }[] = [];
 
-  constructor() {
+  constructor(atlas: BlockTextureAtlas) {
+    this.atlas = atlas;
+    const vt = new Uint8Array(32);
+    for (let id = 0; id < vt.length; id++) vt[id] = this.isVoidBlock(id) ? 1 : 0;
+    this.voidLookup = vt;
+    const ll = new Uint8Array(32);
+    ll[BType.leaf] = 1;
+    ll[BType.cherry_leaf] = 1;
+    this.leafLookup = ll;
     const columnsSpan = RENDER_DISTANCE * 2 + 5;
     this.slotCapacity = columnsSpan * columnsSpan * MAX_HEIGHT_IN_CHUNKS;
 
@@ -102,12 +119,13 @@ export class World {
       vertexShader: vsChunk,
       fragmentShader: fsChunk,
       uniforms: {
-        playerPos: { value: new THREE.Vector3() },
-        uChunkPositions: { value: this.chunkPosTex },
-        uTextureArray: { value: this.atlas.texture },
-        timeOfDay: { value: 0.28 },
+        playerPos:      { value: new THREE.Vector3() },
+        uChunkPositions:{ value: this.chunkPosTex },
+        uTextureArray:  { value: this.atlas.texture },
+        timeOfDay:      { value: 0.28 },
+        // Minecraft colormap tints — plains grass / oak foliage defaults
       },
-      side: THREE.FrontSide,
+      side: THREE.DoubleSide,
     });
 
     this.mesh = new THREE.Mesh(this.megaBuf.geometry, this.material);
@@ -118,6 +136,10 @@ export class World {
       w.onmessage = (e: MessageEvent<OutChunkMeshWorker>) => this.onMeshResult(e.data);
       this.workers.push(w);
     }
+
+    this.terrainWorker = new TerrainGenWorker();
+    this.terrainWorker.onmessage = (e: MessageEvent<OutTerrainWorker>) =>
+      this.onTerrainResult(e.data);
   }
 
   setTimeOfDay(t: number) {
@@ -164,17 +186,20 @@ export class World {
   }
 
   private isVoidBlock(id: number): boolean {
+    // Water treated as solid — cross-chunk water-above-water culled correctly.
+    // Leaves have isTransparent:true so other blocks show faces at leaf boundaries,
+    // and cross-chunk leaf faces are emitted (leafMap then decides solid vs transparent).
+    if (id === BType.water) return false;
     return id === BType.air || this.atlas.blockDefs[id]?.isTransparent === true;
   }
 
   // Precomputed id -> void(1)/solid(0) table so the voidMap inner loop is a
   // plain array index instead of a function call + optional-chaining lookup
   // into blockDefs for every one of the (S+4)^3 samples per chunk.
-  private readonly voidLookup: Uint8Array = (() => {
-    const table = new Uint8Array(32);
-    for (let id = 0; id < table.length; id++) table[id] = this.isVoidBlock(id) ? 1 : 0;
-    return table;
-  })();
+  // Initialized in constructor after atlas is set (field initializers run
+  // before the constructor body, so atlas would be undefined here).
+  private readonly voidLookup: Uint8Array;
+  private readonly leafLookup: Uint8Array;
 
   setBlock(worldX: number, worldY: number, worldZ: number, id: BType) {
     worldX = Math.floor(worldX);
@@ -341,17 +366,38 @@ export class World {
       }
     }
 
+    const leafMap = new Uint8Array(SP * SP * SP);
+    for (let vx = 0; vx < SP; vx++) {
+      const wx = originX + vx - 2;
+      for (let vz = 0; vz < SP; vz++) {
+        const wz = originZ + vz - 2;
+        const col = this.getTerrainColumn(wx, wz);
+        const edited = hasAnyEdits && this.editedColumns.has(columnKey(wx, wz));
+        const base = vx + vz * SP * SP;
+        for (let vy = 0; vy < SP; vy++) {
+          const wy = originY + vy - 2;
+          let id: number = wy >= 0 && wy < WORLD_HEIGHT ? col[wy] : BType.air;
+          if (edited) {
+            const e = this.edits.get(blockKey(wx, wy, wz));
+            if (e !== undefined) id = e;
+          }
+          leafMap[base + vy * SP] = this.leafLookup[id] ?? 0;
+        }
+      }
+    }
+
     const msg: InChunkMeshWorker = {
       chunkKey: key,
       slotId,
       chunkBlocks: chunkBlocks.buffer,
       voidMap: voidMap.buffer,
+      leafMap: leafMap.buffer,
       blockDefs: this.atlas.blockDefs,
     };
 
     const worker = this.workers[this.nextWorker];
     this.nextWorker = (this.nextWorker + 1) % this.workers.length;
-    worker.postMessage(msg, [chunkBlocks.buffer, voidMap.buffer]);
+    worker.postMessage(msg, [chunkBlocks.buffer, voidMap.buffer, leafMap.buffer]);
   }
 
   private onMeshResult(out: OutChunkMeshWorker) {
@@ -372,8 +418,61 @@ export class World {
     if (this.loadedColumns.has(key)) return;
     this.loadedColumns.add(key);
 
-    const bounds = this.editedColumns.size === 0 ? this.columnHeightBounds(cx, cz) : null;
+    // Find which neighbourhood columns (chunk blocks + voidMap padding) aren't
+    // cached yet.  We send only those to the terrain worker; already-cached ones
+    // are skipped so we never duplicate work.
+    const originX = cx * S, originZ = cz * S;
+    const needed: Array<{ x: number; z: number }> = [];
+    for (let vx = -2; vx < S + 2; vx++) {
+      for (let vz = -2; vz < S + 2; vz++) {
+        const wx = originX + vx, wz = originZ + vz;
+        if (!this.terrainColumns.has(columnKey(wx, wz))) {
+          needed.push({ x: wx, z: wz });
+        }
+      }
+    }
 
+    if (needed.length === 0) {
+      // Everything cached — dispatch mesh workers right away
+      this.dispatchColumnMesh(cx, cz);
+      return;
+    }
+
+    // Off-load terrain generation to the dedicated worker so the main thread
+    // never blocks.  Mesh dispatch happens in onTerrainResult once the worker
+    // sends the data back.
+    const jobId = ++this.terrainJobCounter;
+    this.terrainJobs.set(jobId, key);
+    const msg: InTerrainWorker = { jobId, columns: needed };
+    this.terrainWorker.postMessage(msg);
+  }
+
+  private onTerrainResult(out: OutTerrainWorker) {
+    // Cache every column the worker generated
+    for (const { x, z, data } of out.columns) {
+      const col = new Uint16Array(data);
+      const k = columnKey(x, z);
+      if (!this.terrainColumns.has(k)) {
+        this.terrainColumns.set(k, col);
+        // LRU eviction — keep the same 6 000-entry cap as before
+        if (this.terrainColumns.size > 6000) {
+          const oldest = this.terrainColumns.keys().next().value;
+          if (oldest !== undefined) this.terrainColumns.delete(oldest);
+        }
+      }
+    }
+
+    const colKey = this.terrainJobs.get(out.jobId);
+    this.terrainJobs.delete(out.jobId);
+    if (!colKey || !this.loadedColumns.has(colKey)) return; // unloaded while in-flight
+
+    const [cx, cz] = colKey.split(",").map(Number);
+    this.dispatchColumnMesh(cx, cz);
+  }
+
+  /** Allocate chunk slots and fire mesh workers for every vertical slice of a column. */
+  private dispatchColumnMesh(cx: number, cz: number) {
+    const bounds = this.editedColumns.size === 0 ? this.columnHeightBounds(cx, cz) : null;
     for (let cy = 0; cy < MAX_HEIGHT_IN_CHUNKS; cy++) {
       const ck = chunkKey(cx, cy, cz);
       if (this.chunks.has(ck)) continue;

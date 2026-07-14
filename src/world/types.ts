@@ -12,6 +12,15 @@ export enum BType {
   leaf = 7,
   planks = 8,
   water = 9,
+  coal_ore     = 10,
+  iron_ore     = 11,
+  gold_ore     = 12,
+  diamond_ore  = 13,
+  emerald_ore  = 14,
+  lapis_ore    = 15,
+  redstone_ore = 16,
+  cherry_log   = 17,
+  cherry_leaf  = 18,
 }
 
 export interface Pos3 {

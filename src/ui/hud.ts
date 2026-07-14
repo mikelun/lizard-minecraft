@@ -6,16 +6,25 @@ import { BType } from "../world/types";
 import { HOTBAR } from "../player/Controller";
 
 const BLOCK_COLORS: Record<BType, string> = {
-  [BType.air]: "transparent",
-  [BType.grass]: "#5f9e3d",
-  [BType.dirt]: "#755233",
-  [BType.stone]: "#7d7d82",
-  [BType.sand]: "#dfd091",
-  [BType.snow]: "#f0f5fa",
-  [BType.log]: "#5c3f28",
-  [BType.leaf]: "#2d6e2d",
-  [BType.planks]: "#b08a54",
-  [BType.water]: "#3a6ec4",
+  [BType.air]:          "transparent",
+  [BType.grass]:        "#5f9e3d",
+  [BType.dirt]:         "#755233",
+  [BType.stone]:        "#7d7d82",
+  [BType.sand]:         "#dfd091",
+  [BType.snow]:         "#f0f5fa",
+  [BType.log]:          "#5c3f28",
+  [BType.leaf]:         "#2d6e2d",
+  [BType.planks]:       "#b08a54",
+  [BType.water]:        "#3a6ec4",
+  [BType.coal_ore]:     "#4a4a4a",
+  [BType.iron_ore]:     "#c9956a",
+  [BType.gold_ore]:     "#fcee4b",
+  [BType.diamond_ore]:  "#4fc3d4",
+  [BType.emerald_ore]:  "#17dd62",
+  [BType.lapis_ore]:    "#1a4eb5",
+  [BType.redstone_ore]: "#c01e1e",
+  [BType.cherry_log]:  "#7a4a5a",
+  [BType.cherry_leaf]: "#f07090",
 };
 
 export interface Hud {
@@ -61,14 +70,6 @@ export function createHud(container: HTMLElement): Hud {
     return slot;
   });
 
-  const prompt = document.createElement("div");
-  prompt.style.cssText = `
-    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    background:rgba(0,0,0,0.4);font-size:20px;text-align:center;
-  `;
-  prompt.innerHTML = `Click to play<br/><span style="font-size:13px;opacity:0.8;">WASD move · Space jump · Shift sprint · Left click break · Right click place · 1-8 hotbar</span>`;
-  root.appendChild(prompt);
-
   function setSelected(index: number) {
     slots.forEach((s, i) => {
       s.style.borderColor = i === index ? "#fff" : "rgba(255,255,255,0.4)";
@@ -80,6 +81,6 @@ export function createHud(container: HTMLElement): Hud {
   return {
     setSelected,
     setDebugText: (text: string) => { debugText.textContent = text; },
-    showPrompt: (show: boolean) => { prompt.style.display = show ? "flex" : "none"; },
+    showPrompt: (_show: boolean) => {},
   };
 }

@@ -28,6 +28,7 @@ export class PlayerController {
   targetBlock: { position: THREE.Vector3; normal: THREE.Vector3 } | null = null;
 
   private keys = new Set<string>();
+  private lastSpaceTime = 0;
 
   constructor(
     private world: World,
@@ -75,6 +76,15 @@ export class PlayerController {
       this.keys.add(e.code);
       const num = parseInt(e.key, 10);
       if (num >= 1 && num <= HOTBAR.length) this.selectedIndex = num - 1;
+
+      if (e.code === "Space") {
+        const now = performance.now();
+        if (now - this.lastSpaceTime < 300) {
+          this.physics.flying = !this.physics.flying;
+          this.physics.velocity.set(0, 0, 0);
+        }
+        this.lastSpaceTime = now;
+      }
     });
     document.addEventListener("keyup", (e) => this.keys.delete(e.code));
   }
@@ -127,8 +137,15 @@ export class PlayerController {
     const wishZ = fz * forward + rz * strafe;
 
     const sprint = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
-    this.physics.update(dt, wishX, wishZ, sprint);
-    if (this.keys.has("Space")) this.physics.jump();
+
+    let wishY = 0;
+    if (this.physics.flying) {
+      if (this.keys.has("Space")) wishY += 1;
+      if (sprint) wishY -= 1; // Shift = descend while flying
+    }
+
+    this.physics.update(dt, wishX, wishZ, sprint, wishY);
+    if (!this.physics.flying && this.keys.has("Space")) this.physics.jump();
 
     const eye = this.eyePosition();
     this.camera.position.copy(eye);

@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { World } from "./world/World";
 import { PlayerController } from "./player/Controller";
 import { createHud } from "./ui/hud";
+import { buildBlockTextureAtlas } from "./textures/blockTextures";
 
 const app = document.getElementById("app")!;
 
@@ -22,7 +23,8 @@ const sun = new THREE.DirectionalLight(0xffffff, 0.8);
 sun.position.set(80, 120, 40);
 scene.add(sun);
 
-const world = new World();
+const atlas = await buildBlockTextureAtlas();
+const world = new World(atlas);
 scene.add(world.mesh);
 
 // Search a small ring of columns around the origin for a locally flat spot

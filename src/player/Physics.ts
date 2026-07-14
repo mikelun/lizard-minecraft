@@ -26,6 +26,8 @@ const TERMINAL_VELOCITY = -50;
 const JUMP_FORCE = 15;
 const WALK_SPEED = 5;
 const SPRINT_SPEED = 8;
+const FLY_SPEED = 400;
+const FLY_VERTICAL_SPEED = 300;
 
 interface AABB {
   minX: number; minY: number; minZ: number;
@@ -36,6 +38,7 @@ export class PlayerPhysics {
   readonly position: THREE.Vector3; // feet, center of the box's base
   readonly velocity = new THREE.Vector3();
   grounded = false;
+  flying = false;
 
   constructor(private world: World, spawn: THREE.Vector3) {
     this.position = spawn.clone();
@@ -165,14 +168,27 @@ export class PlayerPhysics {
   }
 
   jump() {
+    if (this.flying) return;
     if (this.grounded) {
       this.velocity.y = JUMP_FORCE;
       this.grounded = false;
     }
   }
 
-  update(dt: number, wishX: number, wishZ: number, sprint: boolean) {
+  update(dt: number, wishX: number, wishZ: number, sprint: boolean, wishY = 0) {
     dt = Math.min(dt, 1 / 20);
+
+    if (this.flying) {
+      const hLen = Math.hypot(wishX, wishZ);
+      const vx = hLen > 0 ? (wishX / hLen) * FLY_SPEED : 0;
+      const vz = hLen > 0 ? (wishZ / hLen) * FLY_SPEED : 0;
+      this.position.x += vx * dt;
+      this.position.y += wishY * FLY_VERTICAL_SPEED * dt;
+      this.position.z += vz * dt;
+      this.velocity.set(0, 0, 0);
+      this.grounded = false;
+      return;
+    }
 
     this.velocity.y = Math.max(this.velocity.y - GRAVITY * dt, TERMINAL_VELOCITY);
 

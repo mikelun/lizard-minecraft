@@ -17,7 +17,7 @@ export const SNOW_LVL = 78;
 export const STONE_LVL = 68;
 export const DIRT_LVL = 58;
 export const GRASS_LVL = 40;
-export const SAND_LVL = 38;
+export const SAND_LVL = 37; // only 1 block above sea level → thin shoreline, no big sand pools
 
 export const SEA_LEVEL = 36;
 
