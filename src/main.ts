@@ -27,33 +27,12 @@ const atlas = await buildBlockTextureAtlas();
 const world = new World(atlas);
 scene.add(world.mesh);
 
-// Search a small ring of columns around the origin for a locally flat spot
-// to spawn on (the heightmap has a large amplitude, so (0,0) itself can land
-// on a steep slope or cliff edge). Spawn at the CENTER of a column, not its
-// corner: the player's AABB is narrower than a block but not by much, so
-// starting exactly on an integer (block-corner) coordinate lets it straddle
-// two voxel columns and can wedge it against whichever neighbor is taller.
-function pickSpawnColumn(): { x: number; z: number } {
-  let best = { x: 0, z: 0 };
-  let bestVariance = Infinity;
-  for (let x = -16; x <= 16; x += 4) {
-    for (let z = -16; z <= 16; z += 4) {
-      const h = world.surfaceHeightAt(x + 0.5, z + 0.5);
-      const hx = world.surfaceHeightAt(x + 1.5, z + 0.5);
-      const hz = world.surfaceHeightAt(x + 0.5, z + 1.5);
-      const variance = Math.abs(hx - h) + Math.abs(hz - h);
-      if (variance < bestVariance) {
-        bestVariance = variance;
-        best = { x, z };
-      }
-    }
-  }
-  return best;
-}
-
-const spawnColumn = pickSpawnColumn();
-const spawnX = spawnColumn.x + 0.5, spawnZ = spawnColumn.z + 0.5;
-const spawnY = world.surfaceHeightAt(spawnX, spawnZ) + 1;
+// MC world Dust_2 spawn: MC coords (1, -28, -34) → game coords (1, 36, -34).
+// The terrain worker loads asynchronously, so we pick a fixed spawn above the
+// highest possible block (game Y 47) and let gravity drop the player onto the
+// map surface once chunks stream in.
+const spawnX = 1.5, spawnZ = -33.5;
+const spawnY = 50; // above the top of the MC world (game Y 47)
 const controller = new PlayerController(
   world,
   renderer.domElement,

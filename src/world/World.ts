@@ -20,7 +20,6 @@ import {
   WORLD_HEIGHT,
 } from "../config";
 import { BType } from "./types";
-import { generateColumn, surfaceHeight, TREE_HEIGHT } from "./terrain";
 import { ChunkMegaBuffer } from "./ChunkMegaBuffer";
 import { vsChunk, fsChunk } from "./shaders";
 import type { BlockTextureAtlas } from "../textures/blockTextures";
@@ -147,7 +146,13 @@ export class World {
   }
 
   surfaceHeightAt(worldX: number, worldZ: number): number {
-    return surfaceHeight(Math.floor(worldX), Math.floor(worldZ));
+    // For the MC world the map is all in game Y 0-47 (MC Y -64 to -17).
+    // Return the topmost non-air block in the cached column, or 40 as fallback.
+    const col = this.getTerrainColumn(Math.floor(worldX), Math.floor(worldZ));
+    for (let y = WORLD_HEIGHT - 1; y >= 0; y--) {
+      if (col[y] !== BType.air) return y;
+    }
+    return 40;
   }
 
   // ---- terrain / edits -------------------------------------------------
@@ -156,8 +161,9 @@ export class World {
     const key = columnKey(x, z);
     let col = this.terrainColumns.get(key);
     if (!col) {
+      // Column not yet loaded from worker — return all-air placeholder.
+      // The terrain worker will fill this in asynchronously via loadColumn().
       col = new Uint16Array(WORLD_HEIGHT);
-      generateColumn(x, z, col);
       this.terrainColumns.set(key, col);
       if (this.terrainColumns.size > 6000) {
         const oldest = this.terrainColumns.keys().next().value;
@@ -257,22 +263,24 @@ export class World {
     this.dispatchMesh(cx, cy, cz, entry.slotId);
   }
 
-  // Surface-height-only bounds (no full column generation) over a chunk-
-  // column's padded neighborhood. Only depends on (cx, cz), not cy, so
-  // loadColumn() computes it once and reuses it across all MAX_HEIGHT_IN_CHUNKS
-  // vertical dispatches for that column instead of recomputing per chunk.
+  // Surface-height bounds over a chunk-column's padded neighborhood.
+  // Scans the already-cached terrain columns for the topmost non-air block.
   private columnHeightBounds(cx: number, cz: number): { minH: number; maxH: number } {
     const originX = cx * S, originZ = cz * S;
     let minH = Infinity, maxH = -Infinity;
     for (let vx = -2; vx < S + 2; vx++) {
       const wx = originX + vx;
       for (let vz = -2; vz < S + 2; vz++) {
-        const h = surfaceHeight(wx, originZ + vz);
+        const col = this.getTerrainColumn(wx, originZ + vz);
+        let h = 0;
+        for (let y = WORLD_HEIGHT - 1; y >= 0; y--) {
+          if (col[y] !== BType.air) { h = y; break; }
+        }
         if (h < minH) minH = h;
         if (h > maxH) maxH = h;
       }
     }
-    return { minH, maxH };
+    return { minH: minH === Infinity ? 0 : minH, maxH: maxH === -Infinity ? 0 : maxH };
   }
 
   private dispatchMesh(
@@ -297,13 +305,10 @@ export class World {
     // chunk is still correctly picked up if a later edit exposes it.
     if (bounds) {
       const topY = originY + S - 1;
-      // bounds.maxH is raw ground height only -- trees (trunk + canopy) can
-      // stick up to TREE_HEIGHT blocks above that, so a chunk whose y-range
-      // starts just above maxH can still contain solid log/leaf blocks. Not
-      // accounting for this previously caused tree geometry to be silently
-      // skipped from meshing (invisible, but still solid for collision --
-      // player-visible as unexplained walls/voids near trees).
-      const allAir = originY > bounds.maxH + TREE_HEIGHT && originY > SEA_LEVEL;
+      // For the MC world there are no procedural trees, so maxH is the true
+      // topmost solid block.  Skip chunks entirely above it (all-air) or
+      // entirely below the minimum (all-solid, no exposed faces).
+      const allAir = originY > bounds.maxH && originY > SEA_LEVEL;
       const allSolid = topY < bounds.minH - 1;
       if (allAir || allSolid) return;
     }

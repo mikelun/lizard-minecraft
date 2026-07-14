@@ -31,8 +31,29 @@ const enum Tex {
   // Same RGB as leaf/cherryLeaf but never discarded by the alpha-test in the shader.
   leafSolid       = 21,
   cherryLeafSolid = 22,
+  // World import textures
+  smoothSandstone     = 23,
+  whiteConcrete       = 24,
+  smoothRedSandstone  = 25,
+  smoothStoneTop      = 26,
+  smoothStoneSide     = 27,
+  lightGrayConcrete   = 28,
+  yellowTerracotta    = 29,
+  stoneBricks         = 30,
+  coalBlock           = 31,
+  prismarineBricks    = 32,
+  whiteTerracotta     = 33,
+  cyanTerracotta      = 34,
+  redTerracotta       = 35,
+  greenTerracotta     = 36,
+  limeTerracotta      = 37,
+  cobblestone         = 38,
+  sandstoneTop        = 39,
+  sandstoneSide       = 40,
+  sandstoneBottom     = 41,
+  bricks              = 42,
 }
-const LAYER_COUNT = 23;
+const LAYER_COUNT = 43;
 
 const TEXTURE_FILES: Record<Tex, string> = {
   [Tex.grassTop]:  "/textures/blocks/grass_top.png", // grayscale — tinted in shader
@@ -58,6 +79,27 @@ const TEXTURE_FILES: Record<Tex, string> = {
   [Tex.cherryLeaf]:        "", // loaded from same TGA as Tex.leaf
   [Tex.leafSolid]:         "", // loaded from same TGA — alpha forced to 255
   [Tex.cherryLeafSolid]:   "", // loaded from same TGA — alpha forced to 255
+  // World import textures
+  [Tex.smoothSandstone]:    "/textures/blocks/smooth_sandstone.png",
+  [Tex.whiteConcrete]:      "/textures/blocks/white_concrete.png",
+  [Tex.smoothRedSandstone]: "/textures/blocks/smooth_red_sandstone.png",
+  [Tex.smoothStoneTop]:     "/textures/blocks/smooth_stone_top.png",
+  [Tex.smoothStoneSide]:    "/textures/blocks/smooth_stone_side.png",
+  [Tex.lightGrayConcrete]:  "/textures/blocks/light_gray_concrete.png",
+  [Tex.yellowTerracotta]:   "/textures/blocks/yellow_terracotta.png",
+  [Tex.stoneBricks]:        "/textures/blocks/stone_bricks.png",
+  [Tex.coalBlock]:          "/textures/blocks/coal_block_full.png",
+  [Tex.prismarineBricks]:   "/textures/blocks/prismarine_bricks.png",
+  [Tex.whiteTerracotta]:    "/textures/blocks/white_terracotta.png",
+  [Tex.cyanTerracotta]:     "/textures/blocks/cyan_terracotta.png",
+  [Tex.redTerracotta]:      "/textures/blocks/red_terracotta.png",
+  [Tex.greenTerracotta]:    "/textures/blocks/green_terracotta.png",
+  [Tex.limeTerracotta]:     "/textures/blocks/lime_terracotta.png",
+  [Tex.cobblestone]:        "/textures/blocks/cobblestone.png",
+  [Tex.sandstoneTop]:       "/textures/blocks/sandstone_top.png",
+  [Tex.sandstoneSide]:      "/textures/blocks/sandstone_side.png",
+  [Tex.sandstoneBottom]:    "/textures/blocks/sandstone_bottom.png",
+  [Tex.bricks]:             "/textures/blocks/brick.png",
 };
 
 export interface BlockTextureAtlas {
@@ -142,6 +184,24 @@ export async function buildBlockTextureAtlas(): Promise<BlockTextureAtlas> {
     [BType.redstone_ore]: { sides: Array(6).fill(Tex.redstoneOre) },
     [BType.cherry_log]:  { sides: [Tex.logTop, Tex.logTop, Tex.logSide, Tex.logSide, Tex.logSide, Tex.logSide] },
     [BType.cherry_leaf]: { sides: Array(6).fill(Tex.cherryLeaf), isTransparent: true, isLeaf: true, solidSides: Array(6).fill(Tex.cherryLeafSolid) },
+    // World import block types
+    [BType.smooth_sandstone]:    { sides: Array(6).fill(Tex.smoothSandstone) },
+    [BType.white_concrete]:      { sides: Array(6).fill(Tex.whiteConcrete) },
+    [BType.smooth_red_sandstone]: { sides: Array(6).fill(Tex.smoothRedSandstone) },
+    [BType.smooth_stone]:        { sides: [Tex.smoothStoneTop, Tex.smoothStoneTop, Tex.smoothStoneSide, Tex.smoothStoneSide, Tex.smoothStoneSide, Tex.smoothStoneSide] },
+    [BType.light_gray_concrete]: { sides: Array(6).fill(Tex.lightGrayConcrete) },
+    [BType.yellow_terracotta]:   { sides: Array(6).fill(Tex.yellowTerracotta) },
+    [BType.stone_bricks]:        { sides: Array(6).fill(Tex.stoneBricks) },
+    [BType.coal_block]:          { sides: Array(6).fill(Tex.coalBlock) },
+    [BType.prismarine_bricks]:   { sides: Array(6).fill(Tex.prismarineBricks) },
+    [BType.white_terracotta]:    { sides: Array(6).fill(Tex.whiteTerracotta) },
+    [BType.cyan_terracotta]:     { sides: Array(6).fill(Tex.cyanTerracotta) },
+    [BType.red_terracotta]:      { sides: Array(6).fill(Tex.redTerracotta) },
+    [BType.green_terracotta]:    { sides: Array(6).fill(Tex.greenTerracotta) },
+    [BType.lime_terracotta]:     { sides: Array(6).fill(Tex.limeTerracotta) },
+    [BType.cobblestone]:         { sides: Array(6).fill(Tex.cobblestone) },
+    [BType.sandstone]:           { sides: [Tex.sandstoneTop, Tex.sandstoneBottom, Tex.sandstoneSide, Tex.sandstoneSide, Tex.sandstoneSide, Tex.sandstoneSide] },
+    [BType.bricks]:              { sides: Array(6).fill(Tex.bricks) },
   };
 
   return { texture, blockDefs };

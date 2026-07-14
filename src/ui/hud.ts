@@ -23,8 +23,26 @@ const BLOCK_COLORS: Record<BType, string> = {
   [BType.emerald_ore]:  "#17dd62",
   [BType.lapis_ore]:    "#1a4eb5",
   [BType.redstone_ore]: "#c01e1e",
-  [BType.cherry_log]:  "#7a4a5a",
-  [BType.cherry_leaf]: "#f07090",
+  [BType.cherry_log]:   "#7a4a5a",
+  [BType.cherry_leaf]:  "#f07090",
+  // World import block types
+  [BType.smooth_sandstone]:     "#e0d89c",
+  [BType.white_concrete]:       "#e8e8e8",
+  [BType.smooth_red_sandstone]: "#b85c2a",
+  [BType.smooth_stone]:         "#9a9a9a",
+  [BType.light_gray_concrete]:  "#9d9d9d",
+  [BType.yellow_terracotta]:    "#c8a24d",
+  [BType.stone_bricks]:         "#6b6b6b",
+  [BType.coal_block]:           "#1a1a1a",
+  [BType.prismarine_bricks]:    "#62a99c",
+  [BType.white_terracotta]:     "#cfc2b4",
+  [BType.cyan_terracotta]:      "#576c6e",
+  [BType.red_terracotta]:       "#8f3d2d",
+  [BType.green_terracotta]:     "#4a5c2c",
+  [BType.lime_terracotta]:      "#677534",
+  [BType.cobblestone]:          "#808080",
+  [BType.sandstone]:            "#d9c97a",
+  [BType.bricks]:               "#8c3b2a",
 };
 
 export interface Hud {
