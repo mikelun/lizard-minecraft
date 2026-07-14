@@ -311,7 +311,7 @@ def extract_column(chunk, col_lx, col_lz):
             if mc_y < MC_Y_MIN or mc_y > MC_Y_MAX:
                 continue
             game_y = mc_y + MC_Y_OFFSET
-            idx = col_lx + local_y*16 + col_lz*16*16
+            idx = local_y*16*16 + col_lz*16 + col_lx
             palette_idx = indices[idx] if indices else 0
             if palette_idx >= len(palette):
                 palette_idx = 0
