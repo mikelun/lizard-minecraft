@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Convert Minecraft 1.20.1 world to lizard-minecraft binary.
 
-Output: public/world/world.bin
-Format:
+Output: public/world/world.bin  (then gzip → world.bin.gz)
+Format MCBIN002 — sparse column encoding:
   Header (32 bytes):
-    [0:8]   magic "MCBIN001"
+    [0:8]   magic "MCBIN002"
     [8:12]  minX int32  (min world X coordinate)
     [12:16] minZ int32  (min world Z coordinate)
     [16:20] sizeX uint32 (number of columns in X)
@@ -13,8 +13,11 @@ Format:
     [28:32] gameHeight uint32 (Y levels stored per column)
   Offset table (sizeX * sizeZ * 4 bytes):
     uint32 per column. 0 = all-air column. Non-zero = byte offset into data section.
-  Data section:
-    For each non-empty column: gameHeight uint16 values (block IDs)
+  Data section — sparse: only non-air (y, blockID) pairs per column:
+    uint8   count          number of non-air blocks in this column
+    count × { uint8 y, uint16 blockID }
+  This cuts raw size ~6x vs dense MCBIN001 (avg 4 non-air blocks out of 56 Y slots).
+  Gzipped: ~766 KB vs ~1.5 MB for the dense format.
 """
 import struct, zlib, gzip, os, sys, math
 from pathlib import Path
@@ -631,10 +634,15 @@ def convert(world_dir, out_path, ymin_arg=None, ymax_arg=None, pad=8):
         idx = tz * size_wx + tx
         offset = DATA_OFFSET + len(data_buf)
         offsets[idx] = offset
-        data_buf += struct.pack(f'<{GAME_HEIGHT}H', *col)
+        # Sparse encoding: count + (y, blockID) pairs for non-air only
+        pairs = [(y, bid) for y, bid in enumerate(col) if bid != 0]
+        data_buf.append(len(pairs))
+        for y, bid in pairs:
+            data_buf.append(y)
+            data_buf += struct.pack('<H', bid)
 
     with open(out_path, 'wb') as f:
-        f.write(b'MCBIN001')                       # 8 bytes
+        f.write(b'MCBIN002')                       # 8 bytes
         f.write(struct.pack('<i', min_wx))          # 4: minX
         f.write(struct.pack('<i', min_wz))          # 4: minZ
         f.write(struct.pack('<I', size_wx))         # 4: sizeX
@@ -651,6 +659,12 @@ def convert(world_dir, out_path, ymin_arg=None, ymax_arg=None, pad=8):
 
     size_bytes = os.path.getsize(out_path)
     print(f'  Written: {out_path} ({size_bytes/1024/1024:.1f} MB, {len(all_columns)} columns)')
+    # Gzip the output
+    gz_path = Path(str(out_path) + '.gz')
+    with open(out_path, 'rb') as f_in, gzip.open(gz_path, 'wb', compresslevel=9) as f_out:
+        f_out.write(f_in.read())
+    gz_bytes = os.path.getsize(gz_path)
+    print(f'  Gzipped: {gz_path} ({gz_bytes/1024:.0f} KB)')
 
     # Write spawn.json — spawn above the surface near the centroid.
     # The simple centroid of all columns can land in empty space (e.g. a

@@ -114,6 +114,7 @@ export class World {
   private binBuffer: ArrayBuffer | null = null; // raw buffer for fast Uint16Array views
   private binView: DataView | null = null;
   private binOffsets: Uint32Array | null = null;
+  private binSparse = false;
   private binMinX = 0;
   private binMinZ = 0;
   private binSizeX = 0;
@@ -217,7 +218,8 @@ export class World {
       const buf  = await new Response(ds.readable).arrayBuffer();
       const view = new DataView(buf);
       const magic = new TextDecoder().decode(new Uint8Array(buf, 0, 8));
-      if (magic !== 'MCBIN001') { console.warn('loadBin: bad magic'); return; }
+      if (magic !== 'MCBIN001' && magic !== 'MCBIN002') { console.warn('loadBin: bad magic', magic); return; }
+      this.binSparse    = magic === 'MCBIN002';
       this.binMinX      = view.getInt32(8,  true);
       this.binMinZ      = view.getInt32(12, true);
       this.binSizeX     = view.getUint32(16, true);
@@ -226,7 +228,7 @@ export class World {
       this.binOffsets   = new Uint32Array(buf, 32, this.binSizeX * this.binSizeZ);
       this.binView      = view;
       this.binBuffer    = buf;
-      console.log('[World] bin loaded synchronously');
+      console.log(`[World] bin loaded (${magic}, ${(buf.byteLength/1024).toFixed(0)} KB decompressed)`);
     } catch (e) {
       console.warn('[World] loadBin failed:', e);
     }
@@ -241,9 +243,21 @@ export class World {
       if (tx >= 0 && tz >= 0 && tx < this.binSizeX && tz < this.binSizeZ) {
         const offset = this.binOffsets[tz * this.binSizeX + tx];
         if (offset) {
-          const h = Math.min(this.binGameHeight, WORLD_HEIGHT);
-          // Bulk typed-array copy — ~50× faster than DataView.getUint16 in a loop.
-          col.set(new Uint16Array(this.binBuffer, offset, h));
+          if (this.binSparse) {
+            // MCBIN002: uint8 count + count×(uint8 y, uint16 blockID)
+            const bytes = new Uint8Array(this.binBuffer!, offset);
+            const count = bytes[0];
+            const dv    = this.binView!;
+            for (let i = 0; i < count; i++) {
+              const y   = bytes[1 + i * 3];
+              const bid = dv.getUint16(offset + 1 + i * 3 + 1, true);
+              if (y < WORLD_HEIGHT) col[y] = bid;
+            }
+          } else {
+            // MCBIN001: dense array of gameHeight uint16 values
+            const h = Math.min(this.binGameHeight, WORLD_HEIGHT);
+            col.set(new Uint16Array(this.binBuffer!, offset, h));
+          }
         }
       }
     }
