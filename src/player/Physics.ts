@@ -15,12 +15,9 @@ const HALF_WIDTH = 0.3;
 const HEIGHT = 1.8;
 const EYE_HEIGHT = 1.62;
 
-// Must clear a full block (1.0): unlike the ported source's engine, terrain
-// here is a voxel heightmap where adjacent columns routinely differ by
-// exactly one block on any slope. At the old value (0.6, carried over from
-// the source unchanged) every ordinary single-block rise was a hard wall the
-// player could never climb -- this is what "walls everywhere, can't go" was.
-const STEP_HEIGHT = 1.05;
+// 0.6 lets the player step up half-blocks and low ledges without jumping,
+// while still requiring a jump for full-block (1.0) obstacles.
+const STEP_HEIGHT = 0.6;
 const GRAVITY = 50;
 const TERMINAL_VELOCITY = -50;
 const JUMP_FORCE = 15;
@@ -65,6 +62,19 @@ export class PlayerPhysics {
     };
   }
 
+  /** Returns whether block (bx,by,bz) collides with the player AABB whose
+   *  Y extent is [boxMinY, boxMaxY].  Bottom slabs occupy only the lower half
+   *  of their voxel; top slabs occupy only the upper half. */
+  private blockSolid(bx: number, by: number, bz: number, boxMinY: number, boxMaxY: number): boolean {
+    const id = this.world.getBlock(bx, by, bz);
+    if (id === 0) return false;
+    // Bottom slabs: IDs 38-44 — solid region is by..by+0.5
+    if (id >= 38 && id <= 44) return boxMinY < by + 0.5;
+    // Top slabs: IDs 178-184 — solid region is by+0.5..by+1
+    if (id >= 178 && id <= 184) return boxMaxY > by + 0.5;
+    return this.world.isSolid(bx, by, bz);
+  }
+
   private collides(box: AABB): boolean {
     const x0 = Math.floor(box.minX), x1 = Math.floor(box.maxX - 1e-6);
     const y0 = Math.floor(box.minY), y1 = Math.floor(box.maxY - 1e-6);
@@ -72,7 +82,7 @@ export class PlayerPhysics {
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
         for (let z = z0; z <= z1; z++) {
-          if (this.world.isSolid(x, y, z)) return true;
+          if (this.blockSolid(x, y, z, box.minY, box.maxY)) return true;
         }
       }
     }

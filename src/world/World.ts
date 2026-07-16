@@ -211,8 +211,10 @@ export class World {
    *  synchronously — no worker round-trip needed for collision queries. */
   async loadBin(): Promise<void> {
     try {
-      const resp = await fetch(`/world/world.bin?v=${Date.now()}`);
-      const buf  = await resp.arrayBuffer();
+      const resp = await fetch(`/world/world.bin.gz?v=${Date.now()}`);
+      const ds   = new DecompressionStream('gzip');
+      resp.body!.pipeTo(ds.writable);
+      const buf  = await new Response(ds.readable).arrayBuffer();
       const view = new DataView(buf);
       const magic = new TextDecoder().decode(new Uint8Array(buf, 0, 8));
       if (magic !== 'MCBIN001') { console.warn('loadBin: bad magic'); return; }
