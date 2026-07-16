@@ -213,9 +213,23 @@ export class World {
   async loadBin(): Promise<void> {
     try {
       const resp = await fetch(`/world/world.bin.gz?v=${Date.now()}`);
-      const ds   = new DecompressionStream('gzip');
-      resp.body!.pipeTo(ds.writable);
-      const buf  = await new Response(ds.readable).arrayBuffer();
+      // Read raw bytes first — nginx may serve the .gz file with
+      // Content-Encoding: gzip, causing the browser to auto-decompress before
+      // we see the body.  In that case `raw` already contains MCBIN002 bytes.
+      // Detect by checking the gzip magic (\x1f\x8b); if present, decompress
+      // ourselves; if absent, the browser already did it.
+      const raw  = await resp.arrayBuffer();
+      const hdr  = new Uint8Array(raw, 0, 2);
+      let buf: ArrayBuffer;
+      if (hdr[0] === 0x1f && hdr[1] === 0x8b) {
+        const ds = new DecompressionStream('gzip');
+        const w  = ds.writable.getWriter();
+        w.write(new Uint8Array(raw));
+        w.close();
+        buf = await new Response(ds.readable).arrayBuffer();
+      } else {
+        buf = raw; // already decompressed by browser
+      }
       const view = new DataView(buf);
       const magic = new TextDecoder().decode(new Uint8Array(buf, 0, 8));
       if (magic !== 'MCBIN001' && magic !== 'MCBIN002') { console.warn('loadBin: bad magic', magic); return; }
