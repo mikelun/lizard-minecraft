@@ -1,10 +1,8 @@
 export const vsChunk = `
 layout (location = 0) in uint packed_data;
 layout (location = 1) in uint packed_greedy;
-layout (location = 2) in uint chunk_id;
 
 uniform vec3 playerPos;
-uniform sampler2D uChunkPositions;
 
 int ao_id;
 float x, y, z;
@@ -71,28 +69,21 @@ void unpack_greedy() {
 
 void main() {
     unpack(packed_data);
-
     shading = face_shading[face_id] * ao_values[ao_id];
     int uv_index = vertex_id % 6 + ((face_id & 1) + flip_id * 2) * 6;
-
     vuv = uv_coords[uv_indices[uv_index]];
-
     unpack_greedy();
     vuv *= vec2(greedy_w, greedy_h);
 
     vec3 in_position = vec3(x, y, z);
 
-    vec3 chunkWorldPos = texelFetch(uChunkPositions, ivec2(int(chunk_id), 0), 0).xyz;
-    in_position += chunkWorldPos;
-
-    // World XZ passed to fragment shader for per-pixel biome color
-    vWorldXZ = vec2(in_position.x, in_position.z);
+    // mesh.position holds the chunk's world offset; modelMatrix applies it.
+    vec4 worldPos4 = modelMatrix * vec4(in_position, 1.0);
+    vWorldXZ = worldPos4.xz;
 
     vec4 posView = modelViewMatrix * vec4(in_position, 1.0);
-
-    vec3 dir = normalize(in_position - playerPos);
+    vec3 dir = normalize(worldPos4.xyz - playerPos);
     vY = dir.y;
-
     gl_Position = projectionMatrix * posView;
 }
 `;

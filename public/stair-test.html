@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Stair Geometry Test</title>
+<style>body{margin:0;background:#8fc7ff;overflow:hidden;}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info" style="position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;text-shadow:0 0 3px #000;white-space:pre;"></div>
+<script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js';
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: false });
+renderer.setPixelRatio(1);
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fc7ff);
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(80, 120, 40);
+scene.add(sun);
+
+const loader = new THREE.TextureLoader();
+function tex(p) {
+  const t = loader.load(p, render);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  return t;
+}
+
+const stoneBrickTex = tex('/textures/blocks/stone_bricks.png');
+const smoothSandstoneTex = tex('/textures/blocks/smooth_sandstone.png');
+const stoneTex = tex('/textures/blocks/smooth_stone_top.png');
+
+const mat1 = new THREE.MeshLambertMaterial({ map: stoneBrickTex, side: THREE.DoubleSide });
+const mat2 = new THREE.MeshLambertMaterial({ map: smoothSandstoneTex, side: THREE.DoubleSide });
+
+function pushQuad(verts, uvs, idx, vi,
+  ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz,
+  u0,v0,u1,v1
+) {
+  const i = vi.n;
+  verts.push(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz);
+  uvs.push(u0,v1, u1,v1, u1,v0, u0,v0);
+  idx.push(i,i+1,i+2, i,i+2,i+3);
+  vi.n += 4;
+}
+
+function emitBox(ox,oy,oz, x0,y0,z0, x1,y1,z1, verts,uvs,idx,vi) {
+  // Top
+  pushQuad(verts,uvs,idx,vi, ox+x0,oy+y1,oz+z1, ox+x1,oy+y1,oz+z1, ox+x1,oy+y1,oz+z0, ox+x0,oy+y1,oz+z0, x0,z0,x1,z1);
+  // Bottom
+  pushQuad(verts,uvs,idx,vi, ox+x0,oy+y0,oz+z0, ox+x1,oy+y0,oz+z0, ox+x1,oy+y0,oz+z1, ox+x0,oy+y0,oz+z1, x0,z0,x1,z1);
+  // North -Z
+  pushQuad(verts,uvs,idx,vi, ox+x0,oy+y0,oz+z0, ox+x1,oy+y0,oz+z0, ox+x1,oy+y1,oz+z0, ox+x0,oy+y1,oz+z0, x0,y0,x1,y1);
+  // South +Z
+  pushQuad(verts,uvs,idx,vi, ox+x1,oy+y0,oz+z1, ox+x0,oy+y0,oz+z1, ox+x0,oy+y1,oz+z1, ox+x1,oy+y1,oz+z1, x0,y0,x1,y1);
+  // East +X
+  pushQuad(verts,uvs,idx,vi, ox+x1,oy+y0,oz+z0, ox+x1,oy+y0,oz+z1, ox+x1,oy+y1,oz+z1, ox+x1,oy+y1,oz+z0, z0,y0,z1,y1);
+  // West -X
+  pushQuad(verts,uvs,idx,vi, ox+x0,oy+y0,oz+z1, ox+x0,oy+y0,oz+z0, ox+x0,oy+y1,oz+z0, ox+x0,oy+y1,oz+z1, z0,y0,z1,y1);
+}
+
+// facing: 0=north, 1=south, 2=east, 3=west
+function emitStair(ox,oy,oz, facing, isTop, verts,uvs,idx,vi) {
+  if (!isTop) {
+    emitBox(ox,oy,oz, 0,0,0, 1,0.5,1, verts,uvs,idx,vi); // bottom slab
+    if (facing===0) emitBox(ox,oy,oz, 0,0.5,0,    1,1,0.5,  verts,uvs,idx,vi); // north
+    if (facing===1) emitBox(ox,oy,oz, 0,0.5,0.5,  1,1,1,    verts,uvs,idx,vi); // south
+    if (facing===2) emitBox(ox,oy,oz, 0.5,0.5,0,  1,1,1,    verts,uvs,idx,vi); // east
+    if (facing===3) emitBox(ox,oy,oz, 0,0.5,0,    0.5,1,1,  verts,uvs,idx,vi); // west
+  } else {
+    emitBox(ox,oy,oz, 0,0.5,0, 1,1,1, verts,uvs,idx,vi); // top slab
+    if (facing===0) emitBox(ox,oy,oz, 0,0,0,    1,0.5,0.5,  verts,uvs,idx,vi);
+    if (facing===1) emitBox(ox,oy,oz, 0,0,0.5,  1,0.5,1,    verts,uvs,idx,vi);
+    if (facing===2) emitBox(ox,oy,oz, 0.5,0,0,  1,0.5,1,    verts,uvs,idx,vi);
+    if (facing===3) emitBox(ox,oy,oz, 0,0,0,    0.5,0.5,1,  verts,uvs,idx,vi);
+  }
+}
+
+function buildStairs(positions, mat) {
+  const verts=[],uvs=[],idx=[],vi={n:0};
+  for (const [ox,oy,oz,facing,top] of positions) emitStair(ox,oy,oz,facing,top,verts,uvs,idx,vi);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs,2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, mat);
+}
+
+// Row 1: east-facing staircase (step up going east) — 6 stairs
+// [x, y, z, facing, isTop]
+const eastStairs = Array.from({length:6}, (_,i) => [i, i, 0, 2, 0]); // facing=2=east
+scene.add(buildStairs(eastStairs, mat1));
+
+// Row 2: south-facing staircase (step up going south) — 6 stairs
+const southStairs = Array.from({length:6}, (_,i) => [i*2, 0, i+3, 1, 0]); // facing=1=south, spaced so each is separate
+// Actually make them step upward properly:
+const southStairs2 = Array.from({length:6}, (_,i) => [8, i, i+3, 1, 0]);
+scene.add(buildStairs(southStairs2, mat2));
+
+// Row 3: north-facing staircase — 6 stairs
+const northStairs = Array.from({length:6}, (_,i) => [11, i, 8-i, 0, 0]);
+scene.add(buildStairs(northStairs, mat1));
+
+// Floor
+const fGeo = new THREE.PlaneGeometry(30,30);
+fGeo.rotateX(-Math.PI/2);
+scene.add(new THREE.Mesh(fGeo, new THREE.MeshLambertMaterial({ map: stoneTex }))).position.set(5,-1,4);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.05, 200);
+camera.position.set(-2, 4, 12);
+camera.lookAt(5, 2, 0);
+
+document.getElementById('info').textContent = [
+  'Left (stone): east-facing staircase  — steps up going EAST (+X)',
+  'Middle (sandstone): south-facing stairs — steps up going SOUTH (+Z)',
+  'Right (stone): north-facing stairs — steps up going NORTH (-Z)',
+  '',
+  'Each stair = bottom slab (0..0.5 Y) + upper step (0.5..1 Y) on one half',
+].join('\n');
+
+function render() { renderer.render(scene, camera); }
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  render();
+});
+render();
+window.__s = {scene, camera, renderer};
+</script>
+</body>
+</html>

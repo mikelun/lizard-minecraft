@@ -52,8 +52,12 @@ const enum Tex {
   sandstoneSide       = 40,
   sandstoneBottom     = 41,
   bricks              = 42,
+  chestTop            = 43,
+  chestSide           = 44,
+  chestFront          = 45,
+  chain               = 46,
 }
-const LAYER_COUNT = 43;
+const LAYER_COUNT = 47;
 
 const TEXTURE_FILES: Record<Tex, string> = {
   [Tex.grassTop]:  "/textures/blocks/grass_top.png", // grayscale — tinted in shader
@@ -79,27 +83,31 @@ const TEXTURE_FILES: Record<Tex, string> = {
   [Tex.cherryLeaf]:        "", // loaded from same TGA as Tex.leaf
   [Tex.leafSolid]:         "", // loaded from same TGA — alpha forced to 255
   [Tex.cherryLeafSolid]:   "", // loaded from same TGA — alpha forced to 255
-  // World import textures
-  [Tex.smoothSandstone]:    "/textures/blocks/smooth_sandstone.png",
-  [Tex.whiteConcrete]:      "/textures/blocks/white_concrete.png",
-  [Tex.smoothRedSandstone]: "/textures/blocks/smooth_red_sandstone.png",
-  [Tex.smoothStoneTop]:     "/textures/blocks/smooth_stone_top.png",
-  [Tex.smoothStoneSide]:    "/textures/blocks/smooth_stone_side.png",
-  [Tex.lightGrayConcrete]:  "/textures/blocks/light_gray_concrete.png",
-  [Tex.yellowTerracotta]:   "/textures/blocks/yellow_terracotta.png",
-  [Tex.stoneBricks]:        "/textures/blocks/stone_bricks.png",
+  // World import textures — all from MC 1.21 where available
+  [Tex.smoothSandstone]:    "/mc/textures/block/cut_sandstone.png",   // cut_sandstone and smooth_sandstone both → this BType
+  [Tex.whiteConcrete]:      "/mc/textures/block/white_concrete.png",
+  [Tex.smoothRedSandstone]: "/mc/textures/block/red_sandstone_top.png",
+  [Tex.smoothStoneTop]:     "/mc/textures/block/smooth_stone.png",
+  [Tex.smoothStoneSide]:    "/mc/textures/block/smooth_stone_slab_side.png",
+  [Tex.lightGrayConcrete]:  "/mc/textures/block/light_gray_concrete.png",
+  [Tex.yellowTerracotta]:   "/textures/blocks/yellow_terracotta.png",  // not in mc/textures/block
+  [Tex.stoneBricks]:        "/mc/textures/block/stone_bricks.png",
   [Tex.coalBlock]:          "/textures/blocks/coal_block_full.png",
-  [Tex.prismarineBricks]:   "/textures/blocks/prismarine_bricks.png",
-  [Tex.whiteTerracotta]:    "/textures/blocks/white_terracotta.png",
-  [Tex.cyanTerracotta]:     "/textures/blocks/cyan_terracotta.png",
-  [Tex.redTerracotta]:      "/textures/blocks/red_terracotta.png",
-  [Tex.greenTerracotta]:    "/textures/blocks/green_terracotta.png",
-  [Tex.limeTerracotta]:     "/textures/blocks/lime_terracotta.png",
-  [Tex.cobblestone]:        "/textures/blocks/cobblestone.png",
-  [Tex.sandstoneTop]:       "/textures/blocks/sandstone_top.png",
-  [Tex.sandstoneSide]:      "/textures/blocks/sandstone_side.png",
-  [Tex.sandstoneBottom]:    "/textures/blocks/sandstone_bottom.png",
-  [Tex.bricks]:             "/textures/blocks/brick.png",
+  [Tex.prismarineBricks]:   "/textures/blocks/prismarine_bricks.png",  // not in mc/textures/block
+  [Tex.whiteTerracotta]:    "/mc/textures/block/white_terracotta.png",
+  [Tex.cyanTerracotta]:     "/textures/blocks/cyan_terracotta.png",    // not in mc/textures/block
+  [Tex.redTerracotta]:      "/mc/textures/block/red_terracotta.png",
+  [Tex.greenTerracotta]:    "/textures/blocks/green_terracotta.png",   // not in mc/textures/block
+  [Tex.limeTerracotta]:     "/mc/textures/block/lime_terracotta.png",
+  [Tex.cobblestone]:        "/mc/textures/block/cobblestone.png",
+  [Tex.sandstoneTop]:       "/mc/textures/block/sandstone_top.png",
+  [Tex.sandstoneSide]:      "/mc/textures/block/sandstone.png",
+  [Tex.sandstoneBottom]:    "/mc/textures/block/sandstone_bottom.png",
+  [Tex.bricks]:             "/mc/textures/block/bricks.png",
+  [Tex.chestTop]:           "/textures/blocks/chest_top.png",
+  [Tex.chestSide]:          "/textures/blocks/chest_side.png",
+  [Tex.chestFront]:         "/textures/blocks/chest_front.png",
+  [Tex.chain]:              "/textures/blocks/chain.png",
 };
 
 export interface BlockTextureAtlas {
@@ -202,6 +210,8 @@ export async function buildBlockTextureAtlas(): Promise<BlockTextureAtlas> {
     [BType.cobblestone]:         { sides: Array(6).fill(Tex.cobblestone) },
     [BType.sandstone]:           { sides: [Tex.sandstoneTop, Tex.sandstoneBottom, Tex.sandstoneSide, Tex.sandstoneSide, Tex.sandstoneSide, Tex.sandstoneSide] },
     [BType.bricks]:              { sides: Array(6).fill(Tex.bricks) },
+    // chain is intentionally absent — ChainBlockLayer renders it as thin cross planes.
+    // chest is intentionally absent — ModelLayer renders it as a proper 3D model.
   };
 
   return { texture, blockDefs };

@@ -43,6 +43,43 @@ const BLOCK_COLORS: Record<BType, string> = {
   [BType.cobblestone]:          "#808080",
   [BType.sandstone]:            "#d9c97a",
   [BType.bricks]:               "#8c3b2a",
+  [BType.chest]:                "#a0722a",
+  [BType.chain]:                "#808080",
+  // Cross-post types
+  [BType.iron_bars]:                 "#9a9a9a",
+  [BType.glass_pane]:                "#c8e8ff",
+  [BType.oak_fence]:                 "#b08a54",
+  // Door types
+  [BType.oak_door]:                  "#8c6a3a",
+  [BType.oak_trapdoor]:              "#8c6a3a",
+  [BType.trapdoor_base]:             "#8c6a3a",
+  [BType.door_base]:                 "#8c6a3a",
+  // Stair types (use parent material colors; only the base ID needs an entry
+  // since hud only displays whole BType enum members, not the orientation variants)
+  [BType.stone_brick_stairs]:          "#6b6b6b",
+  [BType.smooth_sandstone_stairs]:     "#e0d89c",
+  [BType.sandstone_stairs]:            "#d9c97a",
+  [BType.smooth_red_sandstone_stairs]: "#b85c2a",
+  [BType.oak_stairs]:                  "#b08a54",
+  [BType.prismarine_brick_stairs]:     "#62a99c",
+  [BType.cobblestone_stairs]:          "#808080",
+  [BType.brick_stairs]:                "#8c3b2a",
+  // Slab types
+  [BType.cut_sandstone_slab]:        "#e0d89c",
+  [BType.smooth_sandstone_slab]:     "#e0d89c",
+  [BType.smooth_stone_slab]:         "#9a9a9a",
+  [BType.smooth_red_sandstone_slab]: "#b85c2a",
+  [BType.oak_slab]:                  "#b08a54",
+  [BType.stone_brick_slab]:          "#6b6b6b",
+  [BType.prismarine_brick_slab]:     "#62a99c",
+  // Top-half slab types
+  [BType.cut_sandstone_slab_top]:        "#e0d89c",
+  [BType.smooth_sandstone_slab_top]:     "#e0d89c",
+  [BType.smooth_stone_slab_top]:         "#9a9a9a",
+  [BType.smooth_red_sandstone_slab_top]: "#b85c2a",
+  [BType.oak_slab_top]:                  "#b08a54",
+  [BType.stone_brick_slab_top]:          "#6b6b6b",
+  [BType.prismarine_brick_slab_top]:     "#62a99c",
 };
 
 export interface Hud {

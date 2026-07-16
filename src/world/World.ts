@@ -20,13 +20,23 @@ import {
   WORLD_HEIGHT,
 } from "../config";
 import { BType } from "./types";
-import { ChunkMegaBuffer } from "./ChunkMegaBuffer";
+import { ChunkMeshPool } from "./ChunkMeshPool";
 import { vsChunk, fsChunk } from "./shaders";
 import type { BlockTextureAtlas } from "../textures/blockTextures";
 import type { InChunkMeshWorker, OutChunkMeshWorker } from "./chunkMesh.worker";
 import ChunkMeshWorker from "./chunkMesh.worker?worker";
 import type { InTerrainWorker, OutTerrainWorker } from "./terrainGen.worker";
 import TerrainGenWorker from "./terrainGen.worker?worker";
+import type { ModelLayer } from "./ModelLayer";
+import type { ChainBlockLayer } from "./ChainBlockLayer";
+import { SLAB_BTYPES } from "./SlabLayer";
+import type { SlabLayer } from "./SlabLayer";
+import { CROSS_POST_BTYPES } from "./CrossPostLayer";
+import type { CrossPostLayer } from "./CrossPostLayer";
+import { DOOR_BTYPES } from "./DoorLayer";
+import type { DoorLayer } from "./DoorLayer";
+import { STAIR_ID_MIN, STAIR_ID_MAX } from "./StairLayer";
+import type { StairLayer } from "./StairLayer";
 
 const S = CHUNK_SIZE;
 const SP = S + 4;
@@ -53,10 +63,9 @@ interface ChunkEntry {
 }
 
 export class World {
-  readonly mesh: THREE.Mesh;
   readonly material: THREE.ShaderMaterial;
 
-  private readonly megaBuf = new ChunkMegaBuffer();
+  private meshPool!: ChunkMeshPool;
   private readonly atlas: BlockTextureAtlas;
 
   private readonly terrainColumns = new Map<string, Uint16Array>();
@@ -72,9 +81,6 @@ export class World {
 
   private readonly freeSlots: number[] = [];
   private nextSlot = 0;
-  private readonly slotCapacity: number;
-  private readonly chunkPosData: Float32Array;
-  private readonly chunkPosTex: THREE.DataTexture;
 
   private readonly workers: Worker[] = [];
   private nextWorker = 0;
@@ -91,44 +97,86 @@ export class World {
   private startChunkZ = 0;
   private loadQueue: { cx: number; cz: number; dist: number }[] = [];
 
-  constructor(atlas: BlockTextureAtlas) {
+  /** Optional model layer; set from outside before the game loop starts. */
+  modelLayer: ModelLayer | null = null;
+  /** Optional chain block layer; set from outside before the game loop starts. */
+  chainLayer: ChainBlockLayer | null = null;
+  /** Optional slab layer; set from outside before the game loop starts. */
+  slabLayer: SlabLayer | null = null;
+  /** Optional cross-post layer (iron bars, glass pane, fence). */
+  crossPostLayer: CrossPostLayer | null = null;
+  /** Optional door layer (doors, trapdoors). */
+  doorLayer: DoorLayer | null = null;
+  /** Optional stair layer (L-shaped stair blocks). */
+  stairLayer: StairLayer | null = null;
+
+  // World binary loaded on the main thread for synchronous collision queries.
+  private binBuffer: ArrayBuffer | null = null; // raw buffer for fast Uint16Array views
+  private binView: DataView | null = null;
+  private binOffsets: Uint32Array | null = null;
+  private binMinX = 0;
+  private binMinZ = 0;
+  private binSizeX = 0;
+  private binSizeZ = 0;
+  private binGameHeight = 0;
+
+  // Columns whose terrain data is ready but whose mesh hasn't been dispatched
+  // yet. Processed N-per-tick in update() to avoid frame spikes when the
+  // terrain worker flushes many jobs at once.
+  private readonly pendingColumnMesh: string[] = [];
+  private static readonly MESH_DISPATCHES_PER_TICK = 3;
+
+  // Raw mesh results from workers, queued so we never process more than N per
+  // frame — prevents a burst of worker completions from spiking frame time.
+  private readonly pendingMeshResults: OutChunkMeshWorker[] = [];
+  private static readonly MESH_RESULTS_PER_TICK = 6;
+  // Column GPU rebuilds per frame — batches all slice updates for a column
+  // into one rebuildColumn() call instead of one per arriving slice.
+  private static readonly COLUMN_FLUSHES_PER_TICK = 4;
+
+  constructor(atlas: BlockTextureAtlas, scene: THREE.Scene) {
     this.atlas = atlas;
-    const vt = new Uint8Array(32);
-    for (let id = 0; id < vt.length; id++) vt[id] = this.isVoidBlock(id) ? 1 : 0;
+    // Size must cover all BType values including stair IDs up to 113,
+    // trapdoor encoded IDs up to 177, and top-slab IDs up to 184.
+    const LOOKUP_SIZE = 256;
+    const vt = new Uint8Array(LOOKUP_SIZE);
+    for (let id = 0; id < LOOKUP_SIZE; id++) vt[id] = this.isVoidBlock(id) ? 1 : 0;
+    // Chest is handled by ModelLayer — treat as void so adjacent blocks show
+    // faces in the 1/16 gap around the chest model.
+    vt[BType.chest] = 1;
+    // Chain is handled by ChainBlockLayer — treat as void so neighbour faces render.
+    vt[BType.chain] = 1;
+    // Slabs are handled by SlabLayer — treat as void so neighbour faces render.
+    for (const id of SLAB_BTYPES) vt[id] = 1;
+    // Cross-post blocks (iron bars, glass pane, fence) — treat as void.
+    for (const id of CROSS_POST_BTYPES) vt[id] = 1;
+    // Door/trapdoor blocks — treat as void.
+    for (const id of DOOR_BTYPES) vt[id] = 1;
+    // New encoded trapdoor range 114-177 — treat as void.
+    for (let id = 114; id <= 177; id++) vt[id] = 1;
+    // Stair blocks — treat as void so StairLayer handles rendering.
+    for (let id = STAIR_ID_MIN; id <= STAIR_ID_MAX; id++) vt[id] = 1;
+    // Encoded door blocks 185-232 (type*4 + facing, 12 door types × 4 facings).
+    for (let id = 185; id <= 232; id++) vt[id] = 1;
     this.voidLookup = vt;
-    const ll = new Uint8Array(32);
+    const ll = new Uint8Array(LOOKUP_SIZE);
     ll[BType.leaf] = 1;
     ll[BType.cherry_leaf] = 1;
     this.leafLookup = ll;
-    const columnsSpan = RENDER_DISTANCE * 2 + 5;
-    this.slotCapacity = columnsSpan * columnsSpan * MAX_HEIGHT_IN_CHUNKS;
-
-    this.chunkPosData = new Float32Array(this.slotCapacity * 4);
-    this.chunkPosTex = new THREE.DataTexture(
-      this.chunkPosData,
-      this.slotCapacity,
-      1,
-      THREE.RGBAFormat,
-      THREE.FloatType,
-    );
-    this.chunkPosTex.needsUpdate = true;
 
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       vertexShader: vsChunk,
       fragmentShader: fsChunk,
       uniforms: {
-        playerPos:      { value: new THREE.Vector3() },
-        uChunkPositions:{ value: this.chunkPosTex },
-        uTextureArray:  { value: this.atlas.texture },
-        timeOfDay:      { value: 0.28 },
-        // Minecraft colormap tints — plains grass / oak foliage defaults
+        playerPos:     { value: new THREE.Vector3() },
+        uTextureArray: { value: this.atlas.texture },
+        timeOfDay:     { value: 0.28 },
       },
       side: THREE.DoubleSide,
     });
 
-    this.mesh = new THREE.Mesh(this.megaBuf.geometry, this.material);
-    this.mesh.frustumCulled = false;
+    this.meshPool = new ChunkMeshPool(this.material, scene);
 
     for (let i = 0; i < WORKER_COUNT; i++) {
       const w = new ChunkMeshWorker();
@@ -157,20 +205,58 @@ export class World {
 
   // ---- terrain / edits -------------------------------------------------
 
-  private getTerrainColumn(x: number, z: number): Uint16Array {
-    const key = columnKey(x, z);
-    let col = this.terrainColumns.get(key);
-    if (!col) {
-      // Column not yet loaded from worker — return all-air placeholder.
-      // The terrain worker will fill this in asynchronously via loadColumn().
-      col = new Uint16Array(WORLD_HEIGHT);
-      this.terrainColumns.set(key, col);
-      if (this.terrainColumns.size > 6000) {
-        const oldest = this.terrainColumns.keys().next().value;
-        if (oldest !== undefined) this.terrainColumns.delete(oldest);
+  private static readonly EMPTY_COLUMN = new Uint16Array(WORLD_HEIGHT);
+
+  /** Fetch world.bin on the main thread so getTerrainColumn can read it
+   *  synchronously — no worker round-trip needed for collision queries. */
+  async loadBin(): Promise<void> {
+    try {
+      const resp = await fetch(`/world/world.bin?v=${Date.now()}`);
+      const buf  = await resp.arrayBuffer();
+      const view = new DataView(buf);
+      const magic = new TextDecoder().decode(new Uint8Array(buf, 0, 8));
+      if (magic !== 'MCBIN001') { console.warn('loadBin: bad magic'); return; }
+      this.binMinX      = view.getInt32(8,  true);
+      this.binMinZ      = view.getInt32(12, true);
+      this.binSizeX     = view.getUint32(16, true);
+      this.binSizeZ     = view.getUint32(20, true);
+      this.binGameHeight= view.getUint32(28, true);
+      this.binOffsets   = new Uint32Array(buf, 32, this.binSizeX * this.binSizeZ);
+      this.binView      = view;
+      this.binBuffer    = buf;
+      console.log('[World] bin loaded synchronously');
+    } catch (e) {
+      console.warn('[World] loadBin failed:', e);
+    }
+  }
+
+  /** Read one column synchronously from the binary and cache it. */
+  private loadColumnFromBin(x: number, z: number): Uint16Array {
+    const col = new Uint16Array(WORLD_HEIGHT);
+    if (this.binBuffer && this.binOffsets) {
+      const tx = x - this.binMinX;
+      const tz = z - this.binMinZ;
+      if (tx >= 0 && tz >= 0 && tx < this.binSizeX && tz < this.binSizeZ) {
+        const offset = this.binOffsets[tz * this.binSizeX + tx];
+        if (offset) {
+          const h = Math.min(this.binGameHeight, WORLD_HEIGHT);
+          // Bulk typed-array copy — ~50× faster than DataView.getUint16 in a loop.
+          col.set(new Uint16Array(this.binBuffer, offset, h));
+        }
       }
     }
+    const k = columnKey(x, z);
+    this.terrainColumns.set(k, col);
     return col;
+  }
+
+  private getTerrainColumn(x: number, z: number): Uint16Array {
+    const k = columnKey(x, z);
+    const cached = this.terrainColumns.get(k);
+    if (cached) return cached;
+    // If the binary is loaded, read synchronously so physics never sees stale air.
+    if (this.binView) return this.loadColumnFromBin(x, z);
+    return World.EMPTY_COLUMN;
   }
 
   getBlock(worldX: number, worldY: number, worldZ: number): BType {
@@ -215,6 +301,7 @@ export class World {
 
     this.edits.set(blockKey(worldX, worldY, worldZ), id);
     this.editedColumns.add(columnKey(worldX, worldZ));
+    this.modelLayer?.onBlockChanged(worldX, worldY, worldZ, id);
 
     const cx = worldX >> 4, cy = worldY >> 4, cz = worldZ >> 4;
     this.remeshChunk(cx, cy, cz);
@@ -231,26 +318,11 @@ export class World {
   // ---- slot management ---------------------------------------------------
 
   private allocSlot(): number {
-    const id = this.freeSlots.pop();
-    if (id !== undefined) return id;
-    if (this.nextSlot >= this.slotCapacity) {
-      // Grow generously rather than crash if a session wanders far with a huge render distance.
-      return this.nextSlot++;
-    }
-    return this.nextSlot++;
+    return this.freeSlots.pop() ?? this.nextSlot++;
   }
 
   private freeSlot(id: number) {
     this.freeSlots.push(id);
-  }
-
-  private setSlotPos(slotId: number, x: number, y: number, z: number) {
-    if (slotId * 4 + 3 >= this.chunkPosData.length) return;
-    this.chunkPosData[slotId * 4] = x;
-    this.chunkPosData[slotId * 4 + 1] = y;
-    this.chunkPosData[slotId * 4 + 2] = z;
-    this.chunkPosData[slotId * 4 + 3] = 1;
-    this.chunkPosTex.needsUpdate = true;
   }
 
   // ---- meshing ------------------------------------------------------------
@@ -406,13 +478,21 @@ export class World {
   }
 
   private onMeshResult(out: OutChunkMeshWorker) {
+    // Remove from inFlight immediately so re-meshing can be triggered if needed.
     this.inFlight.delete(out.chunkKey);
-    const entry = this.chunks.get(out.chunkKey);
-    if (!entry) return; // chunk was unloaded while meshing was in flight
+    // Queue for rate-limited processing in update() — prevents worker bursts
+    // from running rebuildColumn (large array alloc + GPU buffer prep) all in
+    // one frame and spiking render time.
+    this.pendingMeshResults.push(out);
+  }
 
+  private applyMeshResult(out: OutChunkMeshWorker) {
+    const entry = this.chunks.get(out.chunkKey);
+    if (!entry) return; // chunk was unloaded while result was queued
     const packed = new Uint32Array(out.buf);
     const greedy = new Uint32Array(out.gbuf);
-    this.megaBuf.setChunk(entry.slotId, packed, greedy);
+    const [cx, cy, cz] = out.chunkKey.split(",").map(Number);
+    this.meshPool.setChunk(entry.slotId, cx * S, cy * S, cz * S, packed, greedy);
     entry.meshed = true;
   }
 
@@ -438,8 +518,8 @@ export class World {
     }
 
     if (needed.length === 0) {
-      // Everything cached — dispatch mesh workers right away
-      this.dispatchColumnMesh(cx, cz);
+      // Everything cached — queue for mesh dispatch (rate-limited in update())
+      this.pendingColumnMesh.push(key);
       return;
     }
 
@@ -457,13 +537,11 @@ export class World {
     for (const { x, z, data } of out.columns) {
       const col = new Uint16Array(data);
       const k = columnKey(x, z);
-      if (!this.terrainColumns.has(k)) {
-        this.terrainColumns.set(k, col);
-        // LRU eviction — keep the same 6 000-entry cap as before
-        if (this.terrainColumns.size > 6000) {
-          const oldest = this.terrainColumns.keys().next().value;
-          if (oldest !== undefined) this.terrainColumns.delete(oldest);
-        }
+      this.terrainColumns.set(k, col);
+      // LRU eviction — keep the same 6 000-entry cap as before
+      if (this.terrainColumns.size > 6000) {
+        const oldest = this.terrainColumns.keys().next().value;
+        if (oldest !== undefined) this.terrainColumns.delete(oldest);
       }
     }
 
@@ -471,8 +549,48 @@ export class World {
     this.terrainJobs.delete(out.jobId);
     if (!colKey || !this.loadedColumns.has(colKey)) return; // unloaded while in-flight
 
-    const [cx, cz] = colKey.split(",").map(Number);
-    this.dispatchColumnMesh(cx, cz);
+    // Queue rather than dispatch immediately — update() drains N per tick to
+    // prevent frame spikes when the worker flushes a batch of jobs at once.
+    this.pendingColumnMesh.push(colKey);
+  }
+
+  /** Preload all terrain columns in a radius around a world position.
+   * Returns a promise that resolves once the worker has sent back the data,
+   * so callers can await this before starting the game loop. */
+  preloadSpawn(worldX: number, worldZ: number, radius = 2): Promise<void> {
+    const cx = Math.floor(worldX / S);
+    const cz = Math.floor(worldZ / S);
+    const needed: Array<{ x: number; z: number }> = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        const ocx = cx + dx, ocz = cz + dz;
+        const ox = ocx * S, oz = ocz * S;
+        for (let vx = -2; vx < S + 2; vx++) {
+          for (let vz = -2; vz < S + 2; vz++) {
+            const wx = ox + vx, wz = oz + vz;
+            const k = columnKey(wx, wz);
+            if (!this.terrainColumns.has(k)) needed.push({ x: wx, z: wz });
+          }
+        }
+      }
+    }
+    if (needed.length === 0) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      const jobId = ++this.terrainJobCounter;
+      // Use a sentinel key that won't be matched by the normal job handler
+      this.terrainJobs.set(jobId, '__preload__');
+      const origHandler = this.terrainWorker.onmessage as ((e: MessageEvent) => void) | null;
+      this.terrainWorker.onmessage = (e: MessageEvent<OutTerrainWorker>) => {
+        // Let normal handler process it for caching, then intercept our job
+        this.onTerrainResult(e.data);
+        if (e.data.jobId === jobId) {
+          this.terrainWorker.onmessage = origHandler;
+          resolve();
+        }
+      };
+      this.terrainWorker.postMessage({ jobId, columns: needed } as InTerrainWorker);
+    });
   }
 
   /** Allocate chunk slots and fire mesh workers for every vertical slice of a column. */
@@ -483,9 +601,27 @@ export class World {
       if (this.chunks.has(ck)) continue;
       const slotId = this.allocSlot();
       this.chunks.set(ck, { slotId, meshed: false });
-      this.setSlotPos(slotId, cx * S, cy * S, cz * S);
       this.dispatchMesh(cx, cy, cz, slotId, bounds);
     }
+    // Fast getBlock for secondary layer scans: caches the Uint16Array per (wx,wz)
+    // so each (x,z) column is looked up only once regardless of how many Y
+    // values the layer iterates — avoids allocating a columnKey string on every
+    // single getBlock(wx, y, wz) call (saves ~147k string allocs per column).
+    const colCache = new Map<string, Uint16Array>();
+    const fastGet = (wx: number, wy: number, wz: number): BType => {
+      if (wy < 0 || wy >= WORLD_HEIGHT) return BType.air;
+      const k = `${wx},${wz}`;
+      let col = colCache.get(k);
+      if (!col) { col = this.getTerrainColumn(wx, wz); colCache.set(k, col); }
+      return col[wy] as BType;
+    };
+    // Notify custom layers so they can render their block types.
+    this.modelLayer?.onColumnLoaded(cx, cz, fastGet);
+    this.chainLayer?.onColumnLoaded(cx, cz, fastGet);
+    this.slabLayer?.onColumnLoaded(cx, cz, fastGet);
+    this.crossPostLayer?.onColumnLoaded(cx, cz, fastGet);
+    this.doorLayer?.onColumnLoaded(cx, cz, fastGet);
+    this.stairLayer?.onColumnLoaded(cx, cz, fastGet);
   }
 
   private unloadColumn(cx: number, cz: number) {
@@ -497,11 +633,17 @@ export class World {
       const ck = chunkKey(cx, cy, cz);
       const entry = this.chunks.get(ck);
       if (!entry) continue;
-      this.megaBuf.removeChunk(entry.slotId);
+      this.meshPool.removeChunk(entry.slotId);
       this.freeSlot(entry.slotId);
       this.chunks.delete(ck);
       this.inFlight.delete(ck);
     }
+    this.modelLayer?.onColumnUnloaded(cx, cz);
+    this.chainLayer?.onColumnUnloaded(cx, cz);
+    this.slabLayer?.onColumnUnloaded(cx, cz);
+    this.crossPostLayer?.onColumnUnloaded(cx, cz);
+    this.doorLayer?.onColumnUnloaded(cx, cz);
+    this.stairLayer?.onColumnUnloaded(cx, cz);
   }
 
   update(playerPos: THREE.Vector3) {
@@ -532,7 +674,29 @@ export class World {
       }
     }
 
-    this.megaBuf.flush();
+    // Drain pending column mesh dispatches — N per tick so a burst of terrain
+    // worker responses doesn't spike the frame time.
+    let meshed = 0;
+    while (meshed < World.MESH_DISPATCHES_PER_TICK && this.pendingColumnMesh.length > 0) {
+      const colKey = this.pendingColumnMesh.shift()!;
+      if (this.loadedColumns.has(colKey)) {
+        const [cx, cz] = colKey.split(",").map(Number);
+        this.dispatchColumnMesh(cx, cz);
+        meshed++;
+      }
+    }
+
+    // Apply queued mesh worker results — N per tick so bursts of worker
+    // completions don't all call bakeYOffset + mark-dirty in one frame.
+    let applied = 0;
+    while (applied < World.MESH_RESULTS_PER_TICK && this.pendingMeshResults.length > 0) {
+      this.applyMeshResult(this.pendingMeshResults.shift()!);
+      applied++;
+    }
+
+    // Flush dirty column GPU buffers — N per tick to bound the number of
+    // large Uint32Array merges and GPU buffer uploads per render call.
+    this.meshPool.flushDirty(World.COLUMN_FLUSHES_PER_TICK);
   }
 
   private rebuildLoadQueue(pcx: number, pcz: number) {

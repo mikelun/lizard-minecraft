@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Slab Test — Half-Height Blocks</title>
+<style>body{margin:0;background:#8fc7ff;overflow:hidden;}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info" style="position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;text-shadow:0 0 3px #000;white-space:pre;"></div>
+
+<script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js';
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(1);
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fc7ff);
+scene.fog = new THREE.Fog(0x8fc7ff, 30, 120);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(80, 120, 40);
+scene.add(sun);
+
+const loader = new THREE.TextureLoader();
+function loadTex(path) {
+  const t = loader.load(path, () => render());
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  return t;
+}
+
+// ── Slab geometry builder ────────────────────────────────────────────────────
+// Minecraft bottom slab: from=[0,0,0] to=[16,8,16]
+// Side UV: [0, 8, 16, 16] in Minecraft coords = bottom half of texture
+// Three.js (flipY=true): v=0=image bottom, v=1=image top
+// Bottom half of image = v=0..0.5
+function makeSlab(ox, oy, oz, topTex, sideTex) {
+  const h = 0.5;
+  const vLo = 0.0, vHi = 0.5; // bottom half of texture
+
+  function makeGeo(verts, uvs, idx) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
+  // Top face: CCW from above → normal +Y (SW→SE→NE→NW)
+  const topVerts = [
+    ox,   oy+h, oz+1,   // SW
+    ox+1, oy+h, oz+1,   // SE
+    ox+1, oy+h, oz,     // NE
+    ox,   oy+h, oz,     // NW
+  ];
+  const topUVs = [0,0, 1,0, 1,1, 0,1];
+  const topIdx = [0,1,2, 0,2,3];
+  const topGeo = makeGeo(topVerts, topUVs, topIdx);
+
+  // Side faces: bottom half of texture
+  const sideVerts = [], sideUVs = [], sideIdx = [];
+  let vi = 0;
+  function quad(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, u0,v0,u1,v1) {
+    sideVerts.push(
+      ox+ax,oy+ay,oz+az, ox+bx,oy+by,oz+bz,
+      ox+cx,oy+cy,oz+cz, ox+dx,oy+dy,oz+dz
+    );
+    sideUVs.push(u0,v0, u1,v0, u1,v1, u0,v1);
+    sideIdx.push(vi,vi+1,vi+2, vi,vi+2,vi+3);
+    vi += 4;
+  }
+  // North -Z
+  quad(1,0,0, 0,0,0, 0,h,0, 1,h,0,  0,vLo, 1,vHi);
+  // South +Z
+  quad(0,0,1, 1,0,1, 1,h,1, 0,h,1,  0,vLo, 1,vHi);
+  // East +X: CCW from east (BS→BN→TN→TS) → normal +X
+  quad(1,0,1, 1,0,0, 1,h,0, 1,h,1,  0,vLo, 1,vHi);
+  // West -X: CCW from west (BN→BS→TS→TN) → normal -X
+  quad(0,0,0, 0,0,1, 0,h,1, 0,h,0,  0,vLo, 1,vHi);
+  const sideGeo = makeGeo(sideVerts, sideUVs, sideIdx);
+
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(topGeo, new THREE.MeshLambertMaterial({ map: topTex })));
+  group.add(new THREE.Mesh(sideGeo, new THREE.MeshLambertMaterial({ map: sideTex })));
+  return group;
+}
+
+// Also show full block for comparison
+function makeFullBlock(ox, oy, oz, tex) {
+  const geo = new THREE.BoxGeometry(1,1,1);
+  geo.translate(0.5, 0.5, 0.5);
+  const mat = new THREE.MeshLambertMaterial({ map: tex });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(ox, oy, oz);
+  return mesh;
+}
+
+// ── Smooth stone slab (most common in Dust_2 floor) ──────────────────────────
+const smoothStoneTopTex  = loadTex('/textures/blocks/smooth_stone_top.png');
+const smoothStoneSideTex = loadTex('/mc/textures/block/smooth_stone_slab_side.png');
+
+for (let x = 0; x < 8; x++) {
+  scene.add(makeSlab(x, 0, 0, smoothStoneTopTex, smoothStoneSideTex));
+}
+// Full block for comparison
+scene.add(makeFullBlock(8, 0, 0, smoothStoneTopTex));
+
+// ── Smooth sandstone slab ────────────────────────────────────────────────────
+const smoothSandstoneTex = loadTex('/textures/blocks/smooth_sandstone.png');
+for (let x = 0; x < 8; x++) {
+  scene.add(makeSlab(x, 0, 2, smoothSandstoneTex, smoothSandstoneTex));
+}
+scene.add(makeFullBlock(8, 0, 2, smoothSandstoneTex));
+
+// ── Stone brick slab ─────────────────────────────────────────────────────────
+const stoneBricksTex = loadTex('/textures/blocks/stone_bricks.png');
+for (let x = 0; x < 8; x++) {
+  scene.add(makeSlab(x, 0, 4, stoneBricksTex, stoneBricksTex));
+}
+scene.add(makeFullBlock(8, 0, 4, stoneBricksTex));
+
+// ── Floor ────────────────────────────────────────────────────────────────────
+const floorTex = loadTex('/textures/blocks/stone.png');
+floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+floorTex.repeat.set(20, 20);
+const floorMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(40, 40),
+  new THREE.MeshLambertMaterial({ map: floorTex })
+);
+floorMesh.rotation.x = -Math.PI / 2;
+floorMesh.position.set(4, 0, 4);
+scene.add(floorMesh);
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
+camera.position.set(4, 1.8, 12);
+camera.lookAt(4, 0.25, 0);
+
+// ── Info ─────────────────────────────────────────────────────────────────────
+document.getElementById('info').textContent = [
+  'Row 1 (z=0):  Smooth stone slabs + full block comparison',
+  'Row 2 (z=2):  Smooth sandstone slabs + full block',
+  'Row 3 (z=4):  Stone brick slabs + full block',
+  '',
+  'Minecraft slab model: from=[0,0,0] to=[16,8,16]',
+  'Side UV: [0, 8, 16, 16] = bottom half of texture',
+  'Height = 0.5 blocks (half of full block on right)',
+  '',
+  '(Full block shown on right for comparison)',
+].join('\n');
+
+function render() { renderer.render(scene, camera); }
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  render();
+});
+
+render();
+window.__testScene = { scene, camera, renderer };
+</script>
+</body>
+</html>

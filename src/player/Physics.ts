@@ -26,8 +26,8 @@ const TERMINAL_VELOCITY = -50;
 const JUMP_FORCE = 15;
 const WALK_SPEED = 5;
 const SPRINT_SPEED = 8;
-const FLY_SPEED = 400;
-const FLY_VERTICAL_SPEED = 300;
+const FLY_SPEED = 20;
+const FLY_VERTICAL_SPEED = 15;
 
 interface AABB {
   minX: number; minY: number; minZ: number;
@@ -40,8 +40,17 @@ export class PlayerPhysics {
   grounded = false;
   flying = false;
 
+  private readonly spawn: THREE.Vector3;
+
   constructor(private world: World, spawn: THREE.Vector3) {
+    this.spawn = spawn.clone();
     this.position = spawn.clone();
+  }
+
+  respawn() {
+    this.position.copy(this.spawn);
+    this.velocity.set(0, 0, 0);
+    this.grounded = false;
   }
 
   get eyeHeight() {
@@ -177,14 +186,16 @@ export class PlayerPhysics {
 
   update(dt: number, wishX: number, wishZ: number, sprint: boolean, wishY = 0) {
     dt = Math.min(dt, 1 / 20);
+    if (this.position.y < -5) { this.respawn(); return; }
 
     if (this.flying) {
-      const hLen = Math.hypot(wishX, wishZ);
-      const vx = hLen > 0 ? (wishX / hLen) * FLY_SPEED : 0;
-      const vz = hLen > 0 ? (wishZ / hLen) * FLY_SPEED : 0;
-      this.position.x += vx * dt;
-      this.position.y += wishY * FLY_VERTICAL_SPEED * dt;
-      this.position.z += vz * dt;
+      // Normalize the full 3D wish vector so diagonal flight doesn't go faster.
+      const fullLen = Math.hypot(wishX, wishY, wishZ);
+      if (fullLen > 0) {
+        this.position.x += (wishX / fullLen) * FLY_SPEED * dt;
+        this.position.y += (wishY / fullLen) * FLY_SPEED * dt;
+        this.position.z += (wishZ / fullLen) * FLY_SPEED * dt;
+      }
       this.velocity.set(0, 0, 0);
       this.grounded = false;
       return;

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Door / Trapdoor Test</title>
+<style>body{margin:0;background:#8fc7ff;overflow:hidden;}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info" style="position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;text-shadow:0 0 3px #000;white-space:pre;"></div>
+<script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js';
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: false });
+renderer.setPixelRatio(1);
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fc7ff);
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(80, 120, 40);
+scene.add(sun);
+
+const loader = new THREE.TextureLoader();
+function tex(p) {
+  const t = loader.load(p, render);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  return t;
+}
+
+const trapdoorTex = tex('/mc/textures/block/oak_trapdoor.png');
+const doorBotTex  = tex('/mc/textures/block/oak_door_bottom.png');
+const doorTopTex  = tex('/mc/textures/block/oak_door_top.png');
+const stoneTex    = tex('/textures/blocks/smooth_stone_top.png');
+
+// Trapdoor material — fully opaque, no depthWrite issues
+const trapdoorMat = new THREE.MeshLambertMaterial({
+  map: trapdoorTex,
+  side: THREE.DoubleSide,
+});
+
+const doorBotMat = new THREE.MeshLambertMaterial({ map: doorBotTex, side: THREE.DoubleSide });
+const doorTopMat = new THREE.MeshLambertMaterial({ map: doorTopTex, side: THREE.DoubleSide });
+
+function emitBox(ox, oy, oz, x0,y0,z0, x1,y1,z1, uvTop, uvSide, verts, uvs, idx, vi) {
+  function quad(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, u0,v0,u1,v1) {
+    const i = vi.n;
+    verts.push(ox+ax,oy+ay,oz+az, ox+bx,oy+by,oz+bz, ox+cx,oy+cy,oz+cz, ox+dx,oy+dy,oz+dz);
+    uvs.push(u0,v1, u1,v1, u1,v0, u0,v0);
+    idx.push(i,i+1,i+2, i,i+2,i+3);
+    vi.n += 4;
+  }
+  const [tu0,tv0,tu1,tv1] = uvTop;
+  const [su0,sv0,su1,sv1] = uvSide;
+  // Top
+  quad(x0,y1,z0, x1,y1,z0, x1,y1,z1, x0,y1,z1,  tu0,tv0,tu1,tv1);
+  // Bottom
+  quad(x0,y0,z1, x1,y0,z1, x1,y0,z0, x0,y0,z0,  tu0,tv0,tu1,tv1);
+  // North (-Z)
+  quad(x1,y0,z0, x0,y0,z0, x0,y1,z0, x1,y1,z0,  su0,sv0,su1,sv1);
+  // South (+Z)
+  quad(x0,y0,z1, x1,y0,z1, x1,y1,z1, x0,y1,z1,  su0,sv0,su1,sv1);
+  // East (+X)
+  quad(x1,y0,z1, x1,y0,z0, x1,y1,z0, x1,y1,z1,  su0,sv0,su1,sv1);
+  // West (-X)
+  quad(x0,y0,z0, x0,y0,z1, x0,y1,z1, x0,y1,z0,  su0,sv0,su1,sv1);
+}
+
+function buildMesh(positions, emitFn, mat) {
+  const verts=[], uvs=[], idx=[], vi={n:0};
+  for (const [ox,oy,oz] of positions) emitFn(ox,oy,oz, verts,uvs,idx,vi);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs,2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, mat);
+}
+
+// ── Trapdoors (closed horizontal, bottom) ────────────────────────────────────
+// 3px tall at y=0..3/16
+const h = 3/16;
+const tdUvTop  = [0, 0, 1, 1];     // full texture face (top/bottom)
+const tdUvSide = [0, 13/16, 1, 1]; // 3px strip from bottom of 16px texture
+
+const tdPositions = Array.from({length:6}, (_,i) => [i, 0, 0]);
+scene.add(buildMesh(tdPositions, (ox,oy,oz,v,u,id,vi) =>
+  emitBox(ox,oy,oz, 0,0,0, 1,h,1, tdUvTop, tdUvSide, v,u,id,vi), trapdoorMat));
+
+// ── Oak door (closed, south-facing, full height) ─────────────────────────────
+// 3px thick at z=13/16..1, two textures stacked
+const thick = 3/16;
+const doorUvSide = [0, 0, 1, 1];
+const doorUvTop  = [0, 0, thick, 1]; // narrow top face
+
+// Bottom half (y=0..1): door_bottom texture
+const doorBotPositions = [[8, 0, 0]];
+scene.add(buildMesh(doorBotPositions, (ox,oy,oz,v,u,id,vi) =>
+  emitBox(ox,oy,oz, 0,0,1-thick, 1,1,1, [0,0,thick,1], [0,0,1,1], v,u,id,vi), doorBotMat));
+
+// Top half (y=1..2): door_top texture
+const doorTopPositions = [[8, 1, 0]];
+scene.add(buildMesh(doorTopPositions, (ox,oy,oz,v,u,id,vi) =>
+  emitBox(ox,oy,oz, 0,0,1-thick, 1,1,1, [0,0,thick,1], [0,0,1,1], v,u,id,vi), doorTopMat));
+
+// ── Floor ────────────────────────────────────────────────────────────────────
+const fGeo = new THREE.PlaneGeometry(30,10);
+const fMat = new THREE.MeshLambertMaterial({ map: stoneTex });
+fGeo.rotateX(-Math.PI/2);
+scene.add(new THREE.Mesh(fGeo, fMat)).position.set(4,0,2);
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.05, 200);
+camera.position.set(3, 1.5, 8);
+camera.lookAt(5, 0.5, 0);
+
+document.getElementById('info').textContent = [
+  'Row 1 (z=0): 6 oak trapdoors (closed horizontal, bottom) — h=3/16',
+  'Right:       oak door (bottom+top halves, closed south-facing) — 3px thick',
+  '',
+  'Minecraft trapdoor model: from=[0,0,0] to=[16,3,16]',
+  'Minecraft door model: from=[0,0,13] to=[16,16,16]',
+  'Texture: /mc/textures/block/oak_trapdoor.png, oak_door_bottom/top.png',
+].join('\n');
+
+function render() { renderer.render(scene, camera); }
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  render();
+});
+render();
+window.__testScene = { scene, camera, renderer };
+</script>
+</body>
+</html>

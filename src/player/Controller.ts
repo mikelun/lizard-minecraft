@@ -77,7 +77,7 @@ export class PlayerController {
       const num = parseInt(e.key, 10);
       if (num >= 1 && num <= HOTBAR.length) this.selectedIndex = num - 1;
 
-      if (e.code === "Space") {
+      if (e.code === "Space" && !e.repeat) {
         const now = performance.now();
         if (now - this.lastSpaceTime < 300) {
           this.physics.flying = !this.physics.flying;

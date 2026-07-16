@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Iron Bars Connection Test</title>
+<style>body{margin:0;background:#8fc7ff;overflow:hidden;}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info" style="position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;text-shadow:0 0 3px #000;white-space:pre;"></div>
+<script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js';
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: false });
+renderer.setPixelRatio(1);
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fc7ff);
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(80, 120, 40);
+scene.add(sun);
+
+const loader = new THREE.TextureLoader();
+function tex(p) {
+  const t = loader.load(p, render);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  return t;
+}
+
+const barTex  = tex('/textures/blocks/iron_bars.png');
+const glassTex = tex('/textures/blocks/glass.png');
+const plankTex = tex('/textures/blocks/planks_oak.png');
+const stoneTex = tex('/textures/blocks/smooth_stone_top.png');
+
+const barMat  = new THREE.MeshLambertMaterial({ map: barTex,  transparent:true, alphaTest:0.1, side:THREE.DoubleSide, depthWrite:false });
+const glassMat = new THREE.MeshLambertMaterial({ map: glassTex, transparent:true, alphaTest:0.1, side:THREE.DoubleSide, depthWrite:false });
+
+// ── Exact Minecraft constants ─────────────────────────────────────────────
+const LO = 7/16, HI = 9/16;  // bar post extents
+
+function emitBox(ox, oy, oz, x0,y0,z0, x1,y1,z1, verts, uvs, idx, vi) {
+  function quad(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, u0,v0,u1,v1) {
+    const i = vi.n;
+    verts.push(ox+ax,oy+ay,oz+az, ox+bx,oy+by,oz+bz, ox+cx,oy+cy,oz+cz, ox+dx,oy+dy,oz+dz);
+    uvs.push(u0,v1, u1,v1, u1,v0, u0,v0);
+    idx.push(i,i+1,i+2, i,i+2,i+3);
+    vi.n += 4;
+  }
+  quad(x0,y1,z1, x1,y1,z1, x1,y1,z0, x0,y1,z0,  x0,z0,x1,z1); // top
+  quad(x0,y0,z0, x1,y0,z0, x1,y0,z1, x0,y0,z1,  x0,z0,x1,z1); // bottom
+  quad(x0,y0,z0, x1,y0,z0, x1,y1,z0, x0,y1,z0,  x0,y0,x1,y1); // north
+  quad(x1,y0,z1, x0,y0,z1, x0,y1,z1, x1,y1,z1,  x0,y0,x1,y1); // south
+  quad(x1,y0,z0, x1,y0,z1, x1,y1,z1, x1,y1,z0,  z0,y0,z1,y1); // east
+  quad(x0,y0,z1, x0,y0,z0, x0,y1,z0, x0,y1,z1,  z0,y0,z1,y1); // west
+}
+
+function buildBars(positions, connInfo, mat) {
+  const verts=[], uvs=[], idx=[], vi={n:0};
+  for (let i=0;i<positions.length;i++) {
+    const [ox,oy,oz] = positions[i];
+    const {N,S,E,W} = connInfo[i];
+    emitBox(ox,oy,oz, LO,0,LO, HI,1,HI, verts,uvs,idx,vi); // post
+    if (N) emitBox(ox,oy,oz, LO,0,0,    HI,1,LO,  verts,uvs,idx,vi); // north arm
+    if (S) emitBox(ox,oy,oz, LO,0,HI,   HI,1,1,   verts,uvs,idx,vi); // south arm
+    if (E) emitBox(ox,oy,oz, HI,0,LO,   1, 1,HI,  verts,uvs,idx,vi); // east arm
+    if (W) emitBox(ox,oy,oz, 0, 0,LO,   LO,1,HI,  verts,uvs,idx,vi); // west arm
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs,2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, mat);
+}
+
+// ── Scene 1: Row of connected iron bars (like a railing) ────────────────────
+// 8 bars in a row along X, all connected east-west
+const rowPos = Array.from({length:8}, (_,i) => [i,0,0]);
+const rowConn = rowPos.map((_,i) => ({ N:false, S:false, E:i<7, W:i>0 }));
+scene.add(buildBars(rowPos, rowConn, barMat));
+
+// ── Scene 2: Grid of iron bars (like a wall) ─────────────────────────────────
+// 4×4 grid, all connected in both X and Z directions
+const gridPos=[], gridConn=[];
+for (let x=0;x<4;x++) for (let z=0;z<4;z++) {
+  gridPos.push([x, 0, z+3]);
+  gridConn.push({ N:z>0, S:z<3, E:x<3, W:x>0 });
+}
+scene.add(buildBars(gridPos, gridConn, barMat));
+
+// ── Scene 3: Isolated bar (no connections, just post) ────────────────────────
+scene.add(buildBars([[6,0,3]], [{N:false,S:false,E:false,W:false}], barMat));
+
+// ── Floor ────────────────────────────────────────────────────────────────────
+const fGeo = new THREE.PlaneGeometry(30,30);
+const fMat = new THREE.MeshLambertMaterial({ map: stoneTex });
+fGeo.rotateX(-Math.PI/2);
+scene.add(new THREE.Mesh(fGeo, fMat)).position.set(4,0,4);
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.05, 200);
+camera.position.set(-2, 1.7, 8);
+camera.lookAt(3, 0.5, 2);
+
+document.getElementById('info').textContent = [
+  'Row (z=0):  8 connected iron bars (E-W connections)',
+  'Grid (z=3): 4×4 grid connected in all directions',
+  'Isolated (x=6,z=3): single bar post, no connections',
+  '',
+  'Minecraft iron_bars model:',
+  '  Post: from=[7,0,7] to=[9,16,9]',
+  '  Arms: 2px wide extending from post to block edge (8px)',
+  '  Connects to: same type, solid blocks',
+].join('\n');
+
+function render() { renderer.render(scene, camera); }
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  render();
+});
+render();
+window.__testScene = { scene, camera, renderer };
+</script>
+</body>
+</html>

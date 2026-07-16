@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Chain Test</title>
+<style>body{margin:0;background:#8fc7ff;overflow:hidden;}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info" style="position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;text-shadow:0 0 3px #000;white-space:pre;"></div>
+
+<script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js';
+
+// ── Exact Minecraft chain.json geometry ──────────────────────────────────────
+// Two thin quads (zero-depth), each rotated 45° around Y at center (0.5,0.5,0.5)
+// Element 1 uses chain.png cols 0-3 (u 0..3/16)
+// Element 2 uses chain.png cols 3-6 (u 3/16..6/16)
+//
+// After computing 45° Y-rotation manually (see chain.json analysis):
+const CHAIN_Y = {
+  e1: {
+    verts: [
+      0.4335, 0, 0.4335,
+      0.5665, 0, 0.5665,
+      0.5665, 1, 0.5665,
+      0.4335, 1, 0.4335,
+    ],
+    uvs: [0, 0,  3/16, 0,  3/16, 1,  0, 1],
+  },
+  e2: {
+    verts: [
+      0.5665, 0, 0.4335,
+      0.4335, 0, 0.5665,
+      0.4335, 1, 0.5665,
+      0.5665, 1, 0.4335,
+    ],
+    uvs: [3/16, 0,  6/16, 0,  6/16, 1,  3/16, 1],
+  },
+};
+
+// X-axis chain: rotate Y-axis model -90° around Z at center (0.5,0.5,0.5)
+// Rotation: (xc,yc,zc) → (yc, -xc, zc)
+function rotateZ90(verts) {
+  const out = [];
+  for (let i = 0; i < verts.length; i += 3) {
+    const xc = verts[i]   - 0.5;
+    const yc = verts[i+1] - 0.5;
+    const zc = verts[i+2] - 0.5;
+    // -90° around Z: (xc,yc) → (yc, -xc)
+    out.push(yc + 0.5, -xc + 0.5, zc + 0.5);
+  }
+  return out;
+}
+
+// For X-axis chain, V maps along X (chain runs in X), U maps across the thin width
+// We need to remap UV: v_old(Y-dir) → new U(thin-dir), u_old(thin-dir) → new V(X-dir)
+function remapUVforXAxis(uvs) {
+  // Original UV: u=thin(0..3/16), v=height(0..1)
+  // X-axis: chain link repeats in X, so V should be along X
+  // Swap: new_u = old_v (across chain length), new_v = old_u (thin direction)
+  // But we want: v = along X (0..1 maps to chain link), u = thin (0..3/16)
+  // This means: just keep v as-is (0..1 along chain) and u as-is (thin)
+  // Because after Z rotation, the original Y becomes X
+  return uvs.slice(); // UV stays the same (Y-dir → X-dir, thin stays thin)
+}
+
+const CHAIN_X = {
+  e1: {
+    verts: rotateZ90(CHAIN_Y.e1.verts),
+    uvs: remapUVforXAxis(CHAIN_Y.e1.uvs),
+  },
+  e2: {
+    verts: rotateZ90(CHAIN_Y.e2.verts),
+    uvs: remapUVforXAxis(CHAIN_Y.e2.uvs),
+  },
+};
+
+// ── Three.js setup ────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(1);
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fc7ff);
+scene.fog = new THREE.Fog(0x8fc7ff, 30, 120);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+sun.position.set(10, 20, 10);
+scene.add(sun);
+
+// Load chain.png
+const loader = new THREE.TextureLoader();
+const chainTex = loader.load('/textures/blocks/chain.png', () => { render(); });
+chainTex.magFilter = THREE.NearestFilter;
+chainTex.minFilter = THREE.NearestFilter;
+
+const chainMat = new THREE.MeshBasicMaterial({
+  map: chainTex,
+  transparent: true,
+  alphaTest: 0.05,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+
+function makeQuad(vertsFlat, uvsFlat) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(vertsFlat, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvsFlat, 2));
+  geo.setIndex([0,1,2, 0,2,3]);
+  return new THREE.Mesh(geo, chainMat);
+}
+
+function addChain(model, ox, oy, oz) {
+  const e1 = makeQuad(
+    model.e1.verts.map((v, i) => v + [ox, oy, oz][i % 3]),
+    model.e1.uvs
+  );
+  const e2 = makeQuad(
+    model.e2.verts.map((v, i) => v + [ox, oy, oz][i % 3]),
+    model.e2.uvs
+  );
+  scene.add(e1, e2);
+}
+
+// ── Add a floor of sandstone ─────────────────────────────────────────────────
+const floorTex = loader.load('/textures/blocks/smooth_sandstone.png');
+floorTex.magFilter = THREE.NearestFilter;
+floorTex.minFilter = THREE.NearestFilter;
+floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+floorTex.repeat.set(20, 20);
+const floorMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(40, 40),
+  new THREE.MeshLambertMaterial({ map: floorTex })
+);
+floorMesh.rotation.x = -Math.PI / 2;
+floorMesh.position.set(4, 0, 4);
+scene.add(floorMesh);
+
+// ── Row of X-axis chains at y=8, z=0, x=0..8 ────────────────────────────────
+for (let x = 0; x < 9; x++) {
+  addChain(CHAIN_X, x, 8, 0);
+}
+
+// Also add a few Y-axis chains for comparison (at z=5)
+for (let y = 5; y < 9; y++) {
+  addChain(CHAIN_Y, 3, y, 5);
+}
+
+// ── Camera matching game spawn view ─────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
+// View from z=15 looking at z=0 (the X-axis chains), slight upward tilt
+camera.position.set(4, 1.62, 15);
+camera.lookAt(4, 8.5, 0);
+
+// ── Info overlay ─────────────────────────────────────────────────────────────
+const info = document.getElementById('info');
+info.textContent = [
+  'X-axis chains: x=0-8, y=8, z=0 (horizontal, like game chains)',
+  'Y-axis chains: x=3, y=5-8, z=5 (vertical, for comparison)',
+  '',
+  'Camera: looking at chains from +Z, pitch slightly up',
+  '',
+  'chain.json model: two diagonal quads rotated 45° around Y',
+  'X-axis: model rotated -90° around Z',
+  'UV: cols 0-3/16 for element 1, cols 3-6/16 for element 2',
+].join('\n');
+
+function render() {
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  render();
+});
+
+render();
+window.__testScene = { scene, camera, renderer, CHAIN_X, CHAIN_Y };
+</script>
+</body>
+</html>
