@@ -15,9 +15,9 @@ const HALF_WIDTH = 0.3;
 const HEIGHT = 1.8;
 const EYE_HEIGHT = 1.62;
 
-// 0.6 lets the player step up half-blocks and low ledges without jumping,
-// while still requiring a jump for full-block (1.0) obstacles.
-const STEP_HEIGHT = 0.6;
+// 1.05 lets the player step up stairs (adjacent stair tops are 1.0 apart)
+// and half-slabs, while still blocking 2-block walls.
+const STEP_HEIGHT = 1.05;
 const GRAVITY = 50;
 const TERMINAL_VELOCITY = -50;
 const JUMP_FORCE = 15;
@@ -72,6 +72,10 @@ export class PlayerPhysics {
     if (id >= 38 && id <= 44) return boxMinY < by + 0.5;
     // Top slabs: IDs 178-184 — solid region is by+0.5..by+1
     if (id >= 178 && id <= 184) return boxMaxY > by + 0.5;
+    // Stairs: IDs 50-113 — treat as bottom slab for physics (y..y+0.5).
+    // Each stair step rises 1 full block, so STEP_HEIGHT=1.05 handles the
+    // 1.0-block gap between adjacent stair tops (0.5 → 1.5 → 2.5...).
+    if (id >= 50 && id <= 113) return boxMinY < by + 0.5;
     return this.world.isSolid(bx, by, bz);
   }
 
