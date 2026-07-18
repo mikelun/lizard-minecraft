@@ -32,9 +32,23 @@ export class PlayerController {
   // Callback invoked when a shot is fired (main.ts uses this to spawn tracers)
   onShot: ((origin: THREE.Vector3, direction: THREE.Vector3) => void) | null = null;
 
+  readonly isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+  // Joystick state: -1..+1 per axis (set by touch handlers, read in update)
+  joystickX = 0;
+  joystickZ = 0;
+
   private keys = new Set<string>();
   private lastSpaceTime = 0;
   private mouseHeld = false;
+
+  // Mobile touch tracking
+  private joystickTouchId: number | null = null;
+  private joystickBaseX = 0;
+  private joystickBaseY = 0;
+  private lookTouchId: number | null = null;
+  private lookLastX = 0;
+  private lookLastY = 0;
 
   constructor(
     private world: World,
@@ -55,8 +69,14 @@ export class PlayerController {
     return HOTBAR[this.selectedIndex];
   }
 
+  // Public methods for mobile buttons to call
+  startFiring() { this.mouseHeld = true; }
+  stopFiring()  { this.mouseHeld = false; this.ak47.releaseTrigger(); }
+  doJump()      { this.physics.jump(); }
+
   private bindEvents() {
     this.domElement.addEventListener("click", () => {
+      if (this.isMobile) return;
       if (!this.locked) this.domElement.requestPointerLock();
     });
 
@@ -100,6 +120,66 @@ export class PlayerController {
       }
     });
     document.addEventListener("keyup", (e) => this.keys.delete(e.code));
+
+    if (this.isMobile) this.bindTouchEvents();
+  }
+
+  private bindTouchEvents() {
+    const el = this.domElement;
+    const JRAD = 70; // px, must match mobileHud.ts
+
+    el.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      for (const t of Array.from(e.changedTouches)) {
+        const leftHalf = t.clientX < window.innerWidth * 0.45;
+        if (leftHalf && this.joystickTouchId === null) {
+          this.joystickTouchId = t.identifier;
+          this.joystickBaseX = t.clientX;
+          this.joystickBaseY = t.clientY;
+          this.joystickX = 0;
+          this.joystickZ = 0;
+        } else if (!leftHalf && this.lookTouchId === null) {
+          this.lookTouchId = t.identifier;
+          this.lookLastX = t.clientX;
+          this.lookLastY = t.clientY;
+        }
+      }
+    }, { passive: false });
+
+    el.addEventListener("touchmove", (e) => {
+      e.preventDefault();
+      for (const t of Array.from(e.changedTouches)) {
+        if (t.identifier === this.joystickTouchId) {
+          const dx = t.clientX - this.joystickBaseX;
+          const dy = t.clientY - this.joystickBaseY;
+          const dist = Math.hypot(dx, dy);
+          const factor = dist > 0 ? Math.min(dist, JRAD) / dist : 0;
+          this.joystickX = (dx * factor) / JRAD;
+          this.joystickZ = (dy * factor) / JRAD;
+        } else if (t.identifier === this.lookTouchId) {
+          const dx = t.clientX - this.lookLastX;
+          const dy = t.clientY - this.lookLastY;
+          // 1.5× scale: touch swipes cover more pixels than mouse movement deltas
+          this.fpCamera.onMouseMove(dx * 1.5, dy * 1.5);
+          this.lookLastX = t.clientX;
+          this.lookLastY = t.clientY;
+        }
+      }
+    }, { passive: false });
+
+    const endTouch = (e: TouchEvent) => {
+      for (const t of Array.from(e.changedTouches)) {
+        if (t.identifier === this.joystickTouchId) {
+          this.joystickTouchId = null;
+          this.joystickX = 0;
+          this.joystickZ = 0;
+        } else if (t.identifier === this.lookTouchId) {
+          this.lookTouchId = null;
+        }
+      }
+    };
+    el.addEventListener("touchend",    endTouch, { passive: false });
+    el.addEventListener("touchcancel", endTouch, { passive: false });
   }
 
   private eyePosition(): THREE.Vector3 {
@@ -143,6 +223,10 @@ export class PlayerController {
     if (this.keys.has("KeyD")) strafe += 1;
     if (this.keys.has("KeyA")) strafe -= 1;
 
+    // Virtual joystick (mobile): joystickZ positive = down on screen = backward
+    forward -= this.joystickZ;
+    strafe  += this.joystickX;
+
     const yaw = this.fpCamera.yaw;
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
     const rx = Math.cos(yaw), rz = -Math.sin(yaw);
@@ -164,7 +248,7 @@ export class PlayerController {
 
     // AK-47: full-auto fire while mouse held
     this.ak47.update(dt);
-    if (this.mouseHeld && this.locked) {
+    if (this.mouseHeld && (this.locked || this.isMobile)) {
       const fired = this.ak47.fire();
       if (fired && this.onShot) {
         const eye = this.eyePosition();

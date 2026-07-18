@@ -15,6 +15,7 @@ import { DoorLayer } from "./world/DoorLayer";
 import { StairLayer } from "./world/StairLayer";
 import { raycastWithNormal } from "./world/raycast";
 import { spawnBulletHole } from "./world/BulletHoles";
+import { setupMobileControls, type MobileControls } from "./ui/mobileHud";
 
 const app = document.getElementById("app")!;
 
@@ -335,6 +336,12 @@ const outline = new THREE.LineSegments(outlineGeo, new THREE.LineBasicMaterial({
 outline.visible = false;
 scene.add(outline);
 
+// ── Mobile controls (touch devices only) ─────────────────────────────────────
+let mobileControls: MobileControls | null = null;
+if (controller.isMobile) {
+  mobileControls = setupMobileControls(app, controller);
+}
+
 // ── HUD ──────────────────────────────────────────────────────────────────────
 const hud = createHud(app);
 
@@ -357,7 +364,8 @@ function tick(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
 
-  hud.showPrompt(!controller.locked);
+  hud.showPrompt(!controller.locked && !controller.isMobile);
+  mobileControls?.updateKnob(controller.joystickX, controller.joystickZ);
   hud.setSelected(controller.selectedIndex);
 
   controller.update(dt);
