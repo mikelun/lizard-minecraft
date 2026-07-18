@@ -5,61 +5,68 @@
  *   - 600 RPM  (100 ms between shots)
  *   - 30-round magazine, 90 reserve
  *   - 2.43 s reload
- *   - Deterministic 30-shot spray pattern (derived from CS:GO recoil data)
- *   - Aim-punch system: accumulated per shot, exponentially decays after release
+ *   - Deterministic 30-shot spray pattern (real CS:GO recoil data, 50% scale)
+ *   - CS:GO recoil model: punch is HELD while firing (no decay during spray),
+ *     then decays exponentially after trigger release — matching how CS:GO
+ *     actually works (incremental decay during firing caused bullets to land
+ *     nowhere near the expected pattern positions).
  *   - Spray index resets 0.4 s after last shot (CS:GO weapon_recoil_cooldown)
  */
 
 // ── Spray pattern ─────────────────────────────────────────────────────────────
-// Each entry is the INCREMENTAL [yaw, pitch] delta (radians) added to the
-// aim-punch when that shot fires.  Aim-punch decays at PUNCH_DECAY_RATE=5/s
-// (≈0.607× per 100 ms shot interval), so the bullet landing position at shot N
-// is approximately Σ delta[k] × 0.607^(N−k).
+// CUMULATIVE [yaw, pitch] position (radians) at each shot.
+// Each entry is the ABSOLUTE punch at that shot index — fire() sets punch
+// directly to this value instead of accumulating incremental deltas.
+// This is how CS:GO works: the pattern table specifies cumulative positions,
+// not per-shot deltas, and the recoil is held (not decayed) during spraying.
 //
 // Positive pitch = camera kicks UP   (bullets land higher)
 // Positive yaw   = camera kicks RIGHT (bullets land right)
 //
-// CS:GO AK-47 pattern shape (left → BIG LEFT SNAP → right → settle):
-//   Shots  1– 9: gentle left drift + vertical rise
-//   Shot  10: ★ signature hard LEFT snap (~8 °)
-//   Shot  11: continue left, brief
-//   Shots 12–17: aggressive recovery to RIGHT
-//   Shots 18–22: right plateau, slowing
-//   Shots 23–27: near-center oscillation
-//   Shots 28–30: slight pull back left
+// Source: CS:GO community-measured AK-47 recoil data, scaled to 50% so the
+// peak snap (~25° in CS:GO) becomes ~12.5° here — same pattern shape, less
+// overwhelming camera movement for a Minecraft-scale world.
+//
+// Pattern shape:
+//   Shots  1– 9: gentle left drift + upward climb
+//   Shot  10:    ★ signature hard LEFT snap (−8.8°)
+//   Shot  11:    continue left, peak (−12.7°)
+//   Shots 12–16: aggressive recovery → right
+//   Shots 17–27: right plateau (~+8°)
+//   Shots 28–30: sweep back toward left
 
-// [yaw_delta_rad, pitch_delta_rad] — shot indices 0–29 (first shot = index 0)
+// [cumulative_yaw_rad, cumulative_pitch_rad]
 export const SPRAY_PATTERN: ReadonlyArray<readonly [number, number]> = [
-  [ 0.000,  0.000],   // 1  first shot: no kick
-  [-0.002,  0.022],   // 2  slight left, rising
-  [-0.003,  0.018],   // 3
-  [-0.001,  0.021],   // 4
-  [-0.003,  0.028],   // 5
-  [-0.006,  0.030],   // 6
-  [-0.020,  0.024],   // 7  hard left starts
-  [-0.025,  0.016],   // 8
-  [-0.024,  0.005],   // 9
-  [-0.095, -0.003],   // 10 ★ BIG LEFT SNAP
-  [-0.058, -0.004],   // 11 continue left
-  [ 0.042,  0.008],   // 12 snap back right
-  [ 0.045,  0.002],   // 13
-  [ 0.040, -0.003],   // 14
-  [ 0.054, -0.006],   // 15
-  [ 0.065, -0.010],   // 16
-  [ 0.062,  0.005],   // 17
-  [ 0.055,  0.004],   // 18 right plateau
-  [ 0.042,  0.003],   // 19
-  [ 0.030, -0.003],   // 20
-  [ 0.018, -0.017],   // 21 settling
-  [ 0.013, -0.008],   // 22
-  [-0.008,  0.007],   // 23
-  [ 0.001,  0.009],   // 24
-  [ 0.001,  0.000],   // 25
-  [ 0.008,  0.001],   // 26
-  [-0.008,  0.006],   // 27
-  [-0.010, -0.006],   // 28 slight pull back
-  [-0.010, -0.009],   // 29
-  [-0.010, -0.009],   // 30
+  [ 0.000,  0.000],  //  1
+  [-0.003,  0.013],  //  2
+  [-0.007,  0.022],  //  3
+  [-0.003,  0.034],  //  4
+  [-0.007,  0.050],  //  5
+  [-0.014,  0.064],  //  6
+  [-0.029,  0.078],  //  7
+  [-0.045,  0.085],  //  8
+  [-0.057,  0.085],  //  9
+  [-0.154,  0.083],  // 10 ★ BIG LEFT SNAP
+  [-0.221,  0.079],  // 11
+  [-0.188,  0.085],  // 12
+  [-0.160,  0.086],  // 13
+  [-0.136,  0.083],  // 14
+  [-0.097,  0.079],  // 15
+  [-0.047,  0.072],  // 16
+  [ 0.009,  0.074],  // 17
+  [ 0.056,  0.076],  // 18
+  [ 0.091,  0.078],  // 19
+  [ 0.116,  0.076],  // 20
+  [ 0.130,  0.067],  // 21
+  [ 0.139,  0.061],  // 22
+  [ 0.135,  0.065],  // 23
+  [ 0.135,  0.071],  // 24
+  [ 0.135,  0.071],  // 25
+  [ 0.139,  0.071],  // 26
+  [ 0.135,  0.074],  // 27
+  [ 0.074,  0.071],  // 28
+  [ 0.013,  0.065],  // 29
+  [-0.043,  0.059],  // 30
 ] as const;
 
 // ── CS:GO weapon constants ────────────────────────────────────────────────────
@@ -69,10 +76,9 @@ export const RESERVE_AMMO      = 90;
 export const RELOAD_TIME_S     = 2.43;
 export const RECOIL_COOLDOWN_S = 0.4;   // spray index reset after this many s
 
-// Aim-punch decay: exponential, half-life ≈ 140 ms.
-// In CS:GO the punch decays with weapon_recoil_decay1_exp / decay2_exp; this
-// single exponential approximates the observed recovery curve.
-const PUNCH_DECAY_RATE = 5.0; // per second (e^(-5t); reaches ~1 % at t=0.9 s)
+// Aim-punch recovery: exponential decay ONLY after trigger release.
+// half-life ≈ 350 ms — crosshair returns to center in ~1.5 s after spraying.
+const PUNCH_DECAY_RATE = 2.0; // per second
 
 // ── AK47 class ────────────────────────────────────────────────────────────────
 
@@ -115,14 +121,18 @@ export class AK47 {
       return false;
     }
 
-    // Apply spray pattern increment to aim punch
-    const idx = Math.min(this.shotIndex, SPRAY_PATTERN.length - 1);
-    this.punchYaw   += SPRAY_PATTERN[idx][0];
-    this.punchPitch += SPRAY_PATTERN[idx][1];
+    const idx     = Math.min(this.shotIndex, SPRAY_PATTERN.length - 1);
+    const prevIdx = Math.max(0, idx - 1);
 
-    // Visual model kick (springs back to 0 in update())
+    // Set punch directly to cumulative pattern position (CS:GO model: no decay
+    // during firing — the pattern is held while the trigger is held).
+    this.punchYaw   = SPRAY_PATTERN[idx][0];
+    this.punchPitch = SPRAY_PATTERN[idx][1];
+
+    // Visual model kick uses the incremental delta for this shot
+    const dyaw = SPRAY_PATTERN[idx][0] - SPRAY_PATTERN[prevIdx][0];
     this.modelKickPitch += 0.08;
-    this.modelKickYaw   += SPRAY_PATTERN[idx][0] * 1.5;
+    this.modelKickYaw   += dyaw * 1.5;
 
     // Advance state
     this.ammo--;
@@ -166,10 +176,13 @@ export class AK47 {
       }
     }
 
-    // Aim-punch exponential decay toward 0 (happens both while and after firing)
-    const decay = Math.exp(-PUNCH_DECAY_RATE * dt);
-    this.punchPitch *= decay;
-    this.punchYaw   *= decay;
+    // Aim-punch decays only after trigger release (CS:GO model).
+    // While firing, punch is set directly in fire() — no decay here.
+    if (!this._firing) {
+      const decay = Math.exp(-PUNCH_DECAY_RATE * dt);
+      this.punchPitch *= decay;
+      this.punchYaw   *= decay;
+    }
 
     // Spray-index reset after cooldown
     if (!this._firing) {
