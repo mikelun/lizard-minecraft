@@ -8,8 +8,19 @@ let world: {
 } | null = null;
 
 async function loadWorld() {
-  const resp = await fetch('/world/world.bin');
-  const buf = await resp.arrayBuffer();
+  const resp = await fetch('/world/world.bin.gz');
+  const raw  = await resp.arrayBuffer();
+  const hdr  = new Uint8Array(raw, 0, 2);
+  let buf: ArrayBuffer;
+  if (hdr[0] === 0x1f && hdr[1] === 0x8b) {
+    const ds = new DecompressionStream('gzip');
+    const w  = ds.writable.getWriter();
+    w.write(new Uint8Array(raw));
+    w.close();
+    buf = await new Response(ds.readable).arrayBuffer();
+  } else {
+    buf = raw;
+  }
   const view = new DataView(buf);
   const magic = new TextDecoder().decode(new Uint8Array(buf, 0, 8));
   if (magic !== 'MCBIN001' && magic !== 'MCBIN002')
