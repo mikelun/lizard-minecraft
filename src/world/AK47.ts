@@ -92,6 +92,11 @@ export class AK47 {
   modelKickPitch = 0; // radians
   modelKickYaw   = 0;
 
+  // Reload animation offsets applied to the weapon group each frame
+  reloadOffsetY = 0;  // vertical drop (negative = down)
+  reloadOffsetZ = 0;  // push backward
+  reloadRollZ   = 0;  // roll/tilt (negative = CCW tilt, mag-side up)
+
   // Internal fire state
   private fireTimer     = 0;   // ms remaining before next shot is allowed
   private shotIndex     = 0;   // position in SPRAY_PATTERN (0 = first shot)
@@ -184,5 +189,29 @@ export class AK47 {
     const kickDecay = Math.exp(-12 * dt);
     this.modelKickPitch *= kickDecay;
     this.modelKickYaw   *= kickDecay;
+
+    // Reload animation
+    if (this.reloading) {
+      const t = 1 - this.reloadTimer / RELOAD_TIME_S; // 0 → 1 as reload progresses
+
+      // Smooth envelope: ramps up in first 30 %, holds, ramps down in last 30 %
+      const ss = (a: number, b: number, x: number) => {
+        const c = Math.max(0, Math.min(1, (x - a) / (b - a)));
+        return c * c * (3 - 2 * c);
+      };
+      const env = ss(0, 0.30, t) * (1 - ss(0.70, 1.0, t));
+
+      // Small upward bump at ~55 % = new magazine clicks in
+      const clickT = Math.max(0, Math.min(1, (t - 0.50) / 0.10));
+      const click  = Math.sin(clickT * Math.PI) * 0.03;
+
+      this.reloadOffsetY = -0.17 * env + click;
+      this.reloadOffsetZ =  0.06 * env;
+      this.reloadRollZ   = -0.45 * env;
+    } else {
+      this.reloadOffsetY = 0;
+      this.reloadOffsetZ = 0;
+      this.reloadRollZ   = 0;
+    }
   }
 }

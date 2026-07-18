@@ -375,12 +375,16 @@ function tick(now: number) {
   weaponCamera.rotation.copy(controller.camera.rotation);
   weaponCamera.updateMatrixWorld(true);
 
-  // Apply visual model kick from AK-47 recoil
+  // Apply visual model kick + reload animation
   const ak = controller.ak47;
   weaponGroup.position.copy(WEAPON_OFFSET);
   weaponGroup.position.y -= ak.modelKickPitch * 0.3;  // kick down (screen kicks up)
   weaponGroup.position.z += ak.modelKickPitch * 0.1;  // push back slightly
   weaponGroup.rotation.x  = ak.modelKickPitch * 0.4;  // tilt barrel up
+  // Reload: drop + tilt + push back
+  weaponGroup.position.y += ak.reloadOffsetY;
+  weaponGroup.position.z += ak.reloadOffsetZ;
+  weaponGroup.rotation.z  = ak.reloadRollZ;
 
   // Block outline
   if (controller.targetBlock) {
