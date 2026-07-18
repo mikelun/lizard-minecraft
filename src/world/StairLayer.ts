@@ -96,8 +96,10 @@ function emitBox(
 //   facing: 0=north, 1=south, 2=east, 3=west
 //   half:   0=bottom, 1=top
 //
-// We skip the top face of the bottom slab (z-fights with step's bottom face)
-// and the bottom face of the upper step (same shared plane).
+// Fix for missing underside face: instead of skipping the step's bottom face
+// (which IS visible from inside the L-shape), we skip the entire slab top/bottom
+// and re-emit only the exposed half as a standalone quad.  This avoids z-fighting
+// in the covered area while keeping the inner horizontal face visible.
 function emitStair(
   x: number, y: number, z: number,
   orientIdx: number,
@@ -107,22 +109,46 @@ function emitStair(
   const isTop  = (orientIdx & 1) === 1;
 
   if (!isTop) {
-    // half=bottom: slab at y=0..0.5 (render top — exposed half is visible), step at y=0.5..1 (skip bottom — internal face)
-    emitBox(x, y, z,  0, 0, 0,  1, 0.5, 1,  verts, uvs, idx, vi, false, false);
+    // half=bottom: slab at y=0..0.5 (skip top to avoid z-fight), step at y=0.5..1 (all faces)
+    emitBox(x, y, z,  0, 0, 0,  1, 0.5, 1,  verts, uvs, idx, vi, false, /*skipTop*/ true);
     switch (facing) {
-      case 0: emitBox(x, y, z,  0, 0.5, 0,    1, 1, 0.5,  verts, uvs, idx, vi, true); break; // north → step on north half (z=0..0.5)
-      case 1: emitBox(x, y, z,  0, 0.5, 0.5,  1, 1, 1,    verts, uvs, idx, vi, true); break; // south → step on south half (z=0.5..1)
-      case 2: emitBox(x, y, z,  0.5, 0.5, 0,  1, 1, 1,    verts, uvs, idx, vi, true); break; // east  → step on east half (x=0.5..1)
-      case 3: emitBox(x, y, z,  0, 0.5, 0,    0.5, 1, 1,  verts, uvs, idx, vi, true); break; // west  → step on west half (x=0..0.5)
+      case 0: // north → step on north half (z=0..0.5), exposed slab top on south half (z=0.5..1)
+        emitBox(x, y, z,  0, 0.5, 0,  1, 1, 0.5,  verts, uvs, idx, vi);
+        pushQuad(verts, uvs, idx, vi,  x, y+0.5, z+1,  x+1, y+0.5, z+1,  x+1, y+0.5, z+0.5,  x, y+0.5, z+0.5,  0,0,1,1);
+        break;
+      case 1: // south → step on south half (z=0.5..1), exposed slab top on north half (z=0..0.5)
+        emitBox(x, y, z,  0, 0.5, 0.5,  1, 1, 1,  verts, uvs, idx, vi);
+        pushQuad(verts, uvs, idx, vi,  x, y+0.5, z+0.5,  x+1, y+0.5, z+0.5,  x+1, y+0.5, z,  x, y+0.5, z,  0,0,1,1);
+        break;
+      case 2: // east → step on east half (x=0.5..1), exposed slab top on west half (x=0..0.5)
+        emitBox(x, y, z,  0.5, 0.5, 0,  1, 1, 1,  verts, uvs, idx, vi);
+        pushQuad(verts, uvs, idx, vi,  x, y+0.5, z+1,  x+0.5, y+0.5, z+1,  x+0.5, y+0.5, z,  x, y+0.5, z,  0,0,1,1);
+        break;
+      case 3: // west → step on west half (x=0..0.5), exposed slab top on east half (x=0.5..1)
+        emitBox(x, y, z,  0, 0.5, 0,  0.5, 1, 1,  verts, uvs, idx, vi);
+        pushQuad(verts, uvs, idx, vi,  x+0.5, y+0.5, z+1,  x+1, y+0.5, z+1,  x+1, y+0.5, z,  x+0.5, y+0.5, z,  0,0,1,1);
+        break;
     }
   } else {
-    // half=top: slab at y=0.5..1 (skip bottom — internal face), step at y=0..0.5 (render top — exposed)
-    emitBox(x, y, z,  0, 0.5, 0,  1, 1, 1,  verts, uvs, idx, vi, true);
+    // half=top: slab at y=0.5..1 (skip bottom to avoid z-fight), step at y=0..0.5 (all faces)
+    emitBox(x, y, z,  0, 0.5, 0,  1, 1, 1,  verts, uvs, idx, vi, /*skipBottom*/ true);
     switch (facing) {
-      case 0: emitBox(x, y, z,  0, 0, 0,    1, 0.5, 0.5,  verts, uvs, idx, vi, false, false); break; // north → step on north half
-      case 1: emitBox(x, y, z,  0, 0, 0.5,  1, 0.5, 1,    verts, uvs, idx, vi, false, false); break; // south → step on south half
-      case 2: emitBox(x, y, z,  0.5, 0, 0,  1, 0.5, 1,    verts, uvs, idx, vi, false, false); break; // east  → step on east half
-      case 3: emitBox(x, y, z,  0, 0, 0,    0.5, 0.5, 1,  verts, uvs, idx, vi, false, false); break; // west  → step on west half
+      case 0: // north → step on north half (z=0..0.5), exposed slab bottom on south half (z=0.5..1)
+        emitBox(x, y, z,  0, 0, 0,  1, 0.5, 0.5,  verts, uvs, idx, vi);
+        pushQuad(verts, uvs, idx, vi,  x, y+0.5, z+0.5,  x+1, y+0.5, z+0.5,  x+1, y+0.5, z+1,  x, y+0.5, z+1,  0,0,1,1);
+        break;
+      case 1: // south → step on south half (z=0.5..1), exposed slab bottom on north half (z=0..0.5)
+        emitBox(x, y, z,  0, 0, 0.5,  1, 0.5, 1,  verts, uvs, idx, vi);
+        pushQuad(verts, uvs, idx, vi,  x, y+0.5, z,  x+1, y+0.5, z,  x+1, y+0.5, z+0.5,  x, y+0.5, z+0.5,  0,0,1,1);
+        break;
+      case 2: // east → step on east half (x=0.5..1), exposed slab bottom on west half (x=0..0.5)
+        emitBox(x, y, z,  0.5, 0, 0,  1, 0.5, 1,  verts, uvs, idx, vi);
+        pushQuad(verts, uvs, idx, vi,  x, y+0.5, z,  x+0.5, y+0.5, z,  x+0.5, y+0.5, z+1,  x, y+0.5, z+1,  0,0,1,1);
+        break;
+      case 3: // west → step on west half (x=0..0.5), exposed slab bottom on east half (x=0.5..1)
+        emitBox(x, y, z,  0, 0, 0,  0.5, 0.5, 1,  verts, uvs, idx, vi);
+        pushQuad(verts, uvs, idx, vi,  x+0.5, y+0.5, z,  x+1, y+0.5, z,  x+1, y+0.5, z+1,  x+0.5, y+0.5, z+1,  0,0,1,1);
+        break;
     }
   }
 }
