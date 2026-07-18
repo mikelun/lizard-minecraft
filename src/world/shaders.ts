@@ -18,9 +18,9 @@ flat out int vertex_id;
 out vec2 vWorldXZ;
 
 const float face_shading[6] = float[6](
-    1.0, 0.7,
-    0.7, 0.9,
-    0.7, 0.9
+    1.0, 0.5,   // faceId 0: +Y(top)=1.0, faceId 1: -Y(bot)=0.5
+    0.6, 0.6,   // faceId 2: +X=0.6,      faceId 3: -X=0.6 (east/west symmetric)
+    0.8, 0.8    // faceId 4: -Z(N)=0.8,   faceId 5: +Z(S)=0.8 (north/south symmetric)
 );
 
 const float ao_values[4] = float[4](0.45, 0.6, 0.75, 1.0);

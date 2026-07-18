@@ -23,7 +23,7 @@ export class FirstPersonCamera {
     this.yaw -= dx * this.sensitivity;
     this.pitch -= dy * this.sensitivity;
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch));
-    this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+    // Note: camera.rotation is set in Controller.update() to include aim-punch.
   }
 
   get forward(): THREE.Vector3 {

@@ -11,6 +11,7 @@ import { FirstPersonCamera } from "./Camera";
 import { PlayerPhysics } from "./Physics";
 import { raycastWithNormal } from "../world/raycast";
 import { BType } from "../world/types";
+import { AK47 } from "../world/AK47";
 
 const REACH = 6;
 
@@ -22,13 +23,18 @@ export const HOTBAR: BType[] = [
 export class PlayerController {
   readonly fpCamera: FirstPersonCamera;
   readonly physics: PlayerPhysics;
+  readonly ak47 = new AK47();
 
   selectedIndex = 0;
   locked = false;
   targetBlock: { position: THREE.Vector3; normal: THREE.Vector3 } | null = null;
 
+  // Callback invoked when a shot is fired (main.ts uses this to spawn tracers)
+  onShot: ((origin: THREE.Vector3, direction: THREE.Vector3) => void) | null = null;
+
   private keys = new Set<string>();
   private lastSpaceTime = 0;
+  private mouseHeld = false;
 
   constructor(
     private world: World,
@@ -65,8 +71,14 @@ export class PlayerController {
 
     document.addEventListener("mousedown", (e) => {
       if (!this.locked) return;
-      if (e.button === 0) this.breakBlock();
+      if (e.button === 0) this.mouseHeld = true;
       else if (e.button === 2) this.placeBlock();
+    });
+    document.addEventListener("mouseup", (e) => {
+      if (e.button === 0) {
+        this.mouseHeld = false;
+        this.ak47.releaseTrigger();
+      }
     });
     document.addEventListener("contextmenu", (e) => {
       if (this.locked) e.preventDefault();
@@ -74,6 +86,7 @@ export class PlayerController {
 
     document.addEventListener("keydown", (e) => {
       this.keys.add(e.code);
+      if (e.code === "KeyR" && !e.repeat) this.ak47.reload();
       const num = parseInt(e.key, 10);
       if (num >= 1 && num <= HOTBAR.length) this.selectedIndex = num - 1;
 
@@ -136,21 +149,45 @@ export class PlayerController {
     const wishX = fx * forward + rx * strafe;
     const wishZ = fz * forward + rz * strafe;
 
-    const sprint = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    const shift = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    const ctrl = this.keys.has("ControlLeft") || this.keys.has("ControlRight");
+    this.physics.crouching = ctrl;
 
     let wishY = 0;
     if (this.physics.flying) {
       if (this.keys.has("Space")) wishY += 1;
-      if (sprint) wishY -= 1; // Shift = descend while flying
+      if (shift) wishY -= 1;
     }
 
-    this.physics.update(dt, wishX, wishZ, sprint, wishY);
+    this.physics.update(dt, wishX, wishZ, shift, wishY);
     if (!this.physics.flying && this.keys.has("Space")) this.physics.jump();
+
+    // AK-47: full-auto fire while mouse held
+    this.ak47.update(dt);
+    if (this.mouseHeld && this.locked) {
+      const fired = this.ak47.fire();
+      if (fired && this.onShot) {
+        const eye = this.eyePosition();
+        // Shoot direction = base camera direction + current aim punch
+        const shootPitch = this.fpCamera.pitch + this.ak47.punchPitch;
+        const shootYaw   = this.fpCamera.yaw   + this.ak47.punchYaw;
+        const dir = new THREE.Vector3(0, 0, -1)
+          .applyEuler(new THREE.Euler(shootPitch, shootYaw, 0, "YXZ"));
+        this.onShot(eye, dir);
+      }
+    }
 
     const eye = this.eyePosition();
     this.camera.position.copy(eye);
 
-    const dir = this.fpCamera.forward;
+    // Camera rotation = base angles + current aim punch (so the screen kicks with recoil)
+    const renderPitch = this.fpCamera.pitch + this.ak47.punchPitch;
+    const renderYaw   = this.fpCamera.yaw   + this.ak47.punchYaw;
+    this.camera.rotation.set(renderPitch, renderYaw, 0, "YXZ");
+
+    // Raycast for block targeting uses the punched direction
+    const dir = new THREE.Vector3(0, 0, -1)
+      .applyEuler(new THREE.Euler(renderPitch, renderYaw, 0, "YXZ"));
     const hit = raycastWithNormal(eye, dir, REACH, (x, y, z) => this.world.getBlock(x, y, z) !== BType.air);
     this.targetBlock = hit
       ? { position: new THREE.Vector3(hit.position.x, hit.position.y, hit.position.z), normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z) }

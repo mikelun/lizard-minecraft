@@ -86,6 +86,9 @@ export interface Hud {
   setSelected(index: number): void;
   setDebugText(text: string): void;
   showPrompt(show: boolean): void;
+  setAmmo(current: number, reserve: number, reloading: boolean): void;
+  /** Update the dynamic crosshair gap (pixels from centre to arm start). */
+  updateCrosshair(gap: number): void;
 }
 
 export function createHud(container: HTMLElement): Hud {
@@ -93,16 +96,48 @@ export function createHud(container: HTMLElement): Hud {
   root.style.cssText = "position:fixed;inset:0;pointer-events:none;font-family:monospace;color:#fff;user-select:none;";
   container.appendChild(root);
 
-  const crosshair = document.createElement("div");
-  crosshair.style.cssText = `
-    position:absolute;top:50%;left:50%;width:14px;height:14px;
-    transform:translate(-50%,-50%);
-  `;
-  crosshair.innerHTML = `
-    <div style="position:absolute;top:6px;left:0;width:14px;height:2px;background:#fff;box-shadow:0 0 2px #000;"></div>
-    <div style="position:absolute;top:0;left:6px;width:2px;height:14px;background:#fff;box-shadow:0 0 2px #000;"></div>
-  `;
-  root.appendChild(crosshair);
+  // ── CS:GO-style dynamic crosshair ────────────────────────────────────────────
+  // 4 arms + center dot.  Gap from centre to arm start is updated each frame.
+  const XH_LEN  = 8;   // arm length (px)
+  const XH_W    = 2;   // arm thickness (px)
+  const XH_COLOR = "#04ff00";
+  const XH_OUTLINE = "0 0 0 1px rgba(0,0,0,0.85)";
+
+  const xhRoot = document.createElement("div");
+  xhRoot.style.cssText = "position:absolute;top:50%;left:50%;pointer-events:none;";
+  root.appendChild(xhRoot);
+
+  function arm(horiz: boolean): HTMLDivElement {
+    const el = document.createElement("div");
+    el.style.cssText = [
+      "position:absolute",
+      `background:${XH_COLOR}`,
+      `box-shadow:${XH_OUTLINE}`,
+      horiz
+        ? `width:${XH_LEN}px;height:${XH_W}px;top:${-XH_W / 2}px`
+        : `width:${XH_W}px;height:${XH_LEN}px;left:${-XH_W / 2}px`,
+    ].join(";");
+    return el;
+  }
+
+  const xhTop    = arm(false); // vertical, above centre
+  const xhBottom = arm(false); // vertical, below centre
+  const xhLeft   = arm(true);  // horizontal, left of centre
+  const xhRight  = arm(true);  // horizontal, right of centre
+
+  const xhDot = document.createElement("div");
+  xhDot.style.cssText = `position:absolute;width:2px;height:2px;background:${XH_COLOR};left:-1px;top:-1px;box-shadow:${XH_OUTLINE};`;
+
+  xhRoot.append(xhTop, xhBottom, xhLeft, xhRight, xhDot);
+
+  function updateCrosshair(gap: number) {
+    const g = Math.round(gap);
+    xhTop.style.bottom    = `${g}px`;
+    xhBottom.style.top    = `${g}px`;
+    xhLeft.style.right    = `${g}px`;
+    xhRight.style.left    = `${g}px`;
+  }
+  updateCrosshair(3); // initial resting gap
 
   const debugText = document.createElement("div");
   debugText.style.cssText = "position:absolute;top:8px;left:8px;font-size:12px;line-height:1.4;text-shadow:0 0 3px #000;white-space:pre;";
@@ -125,6 +160,28 @@ export function createHud(container: HTMLElement): Hud {
     return slot;
   });
 
+  // ── Ammo counter (CS:GO style: bottom-right) ──────────────────────────────
+  const ammoEl = document.createElement("div");
+  ammoEl.style.cssText = `
+    position:absolute;bottom:60px;right:24px;
+    font-family:monospace;color:#fff;text-align:right;
+    text-shadow:0 1px 4px #000,0 0 8px #000;
+    line-height:1.1;
+  `;
+  root.appendChild(ammoEl);
+
+  function setAmmo(current: number, reserve: number, reloading: boolean) {
+    if (reloading) {
+      ammoEl.innerHTML = `<span style="font-size:28px;color:#ffcc44;">RELOADING</span>`;
+    } else {
+      const lowColor = current <= 5 ? "#ff4444" : "#fff";
+      ammoEl.innerHTML =
+        `<span style="font-size:40px;font-weight:bold;color:${lowColor};">${current}</span>` +
+        `<span style="font-size:22px;color:rgba(255,255,255,0.55);"> / ${reserve}</span>`;
+    }
+  }
+  setAmmo(30, 90, false);
+
   function setSelected(index: number) {
     slots.forEach((s, i) => {
       s.style.borderColor = i === index ? "#fff" : "rgba(255,255,255,0.4)";
@@ -137,5 +194,7 @@ export function createHud(container: HTMLElement): Hud {
     setSelected,
     setDebugText: (text: string) => { debugText.textContent = text; },
     showPrompt: (_show: boolean) => {},
+    setAmmo,
+    updateCrosshair,
   };
 }

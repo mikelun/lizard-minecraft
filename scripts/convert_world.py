@@ -484,11 +484,19 @@ def extract_column(chunk, col_lx, col_lz):
                 else:  # bottom
                     btype = SLAB_BLOCKS[block_name]
             # Check if it's a door block (encode type + facing: ID = base + type*4 + facing)
+            # Open doors are skipped (rendered as air) — an open door panel is
+            # folded against the side wall and would require hinge+open geometry;
+            # treating it as air keeps the passage visually clear (correct for
+            # most decorative/functional open doors in the CS:GO map).
             elif block_name in DOOR_TYPE_IDX:
-                facing_s = props.get('facing', 'south') if isinstance(props, dict) else 'south'
-                fi   = DOOR_FACING_IDX.get(facing_s, 1)
-                ti   = DOOR_TYPE_IDX[block_name]
-                btype = DOOR_BASE + ti * 4 + fi
+                is_open = (props.get('open', 'false') == 'true') if isinstance(props, dict) else False
+                if is_open:
+                    btype = 0
+                else:
+                    facing_s = props.get('facing', 'south') if isinstance(props, dict) else 'south'
+                    fi   = DOOR_FACING_IDX.get(facing_s, 1)
+                    ti   = DOOR_TYPE_IDX[block_name]
+                    btype = DOOR_BASE + ti * 4 + fi
             # Check if it's a trapdoor block
             elif block_name in TRAPDOOR_TYPE:
                 ttype = TRAPDOOR_TYPE[block_name]

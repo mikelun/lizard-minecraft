@@ -276,15 +276,16 @@ function computeDisplayMatrix(transform: DisplayTransform): THREE.Matrix4 {
 
 // ── public API ────────────────────────────────────────────────────────────────
 
-export async function loadAllObjects(scene: THREE.Scene): Promise<void> {
+export async function loadAllObjects(scene: THREE.Scene): Promise<THREE.InstancedMesh[]> {
+  const meshes: THREE.InstancedMesh[] = [];
   let data: AllObjects;
   try {
     const res = await fetch(`/mc/models/all_objects.json?v=${Date.now()}`);
-    if (!res.ok) { console.error("[AllObjects] fetch failed:", res.status); return; }
+    if (!res.ok) { console.error("[AllObjects] fetch failed:", res.status); return []; }
     data = await res.json() as AllObjects;
   } catch (e) {
     console.error("[AllObjects] error:", e);
-    return;
+    return [];
   }
 
   // Accumulate per (geometry, material) batches for InstancedMesh.
@@ -347,8 +348,10 @@ export async function loadAllObjects(scene: THREE.Scene): Promise<void> {
     }
     im.instanceMatrix.needsUpdate = true;
     scene.add(im);
+    meshes.push(im);
     instancedMeshCount++;
   }
 
   console.log(`[AllObjects] ${entityCount} entities → ${instancedMeshCount} InstancedMesh`);
+  return meshes;
 }

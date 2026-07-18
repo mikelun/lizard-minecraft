@@ -17,9 +17,11 @@ import * as THREE from "three";
 
 export const vsBlock = /* glsl */`
 varying vec3 vWorldNormal;
+varying vec3 vLocalNormal;
 varying vec2 vUv;
 void main() {
   vUv = uv;
+  vLocalNormal = normal; // model-space normal (before any instance/world transform)
 #ifdef USE_INSTANCING
   // instanceMatrix: per-instance model transform provided by Three.js for InstancedMesh.
   // modelMatrix is identity (InstancedMesh has no base transform), so the instance
@@ -40,16 +42,17 @@ void main() {
 export const fsBlock = /* glsl */`
 uniform sampler2D map;
 varying vec3 vWorldNormal;
+varying vec3 vLocalNormal; // unused here; declared to match vsBlock varyings
 varying vec2 vUv;
 
 // Matches face_shading[6] in shaders.ts (terrain chunk vertex shader).
-// Face IDs from chunkMesh.worker.ts FACE_DEFS:
-//   0=+Y(top):1.0  1=-Y(bot):0.7  2=+X:0.7  3=-X:0.9  4=-Z(N):0.7  5=+Z(S):0.9
+// Classic Minecraft-style directional shading:
+//   +Y(top)=1.0  -Y(bot)=0.5  horizontal sides=0.7/0.8
 float faceShading(vec3 n) {
   vec3 a = abs(n);
-  if (a.y >= a.x && a.y >= a.z) return n.y > 0.0 ? 1.0 : 0.7;  // +Y:1.0  -Y:0.7
-  if (a.x >= a.z)                return n.x > 0.0 ? 0.7 : 0.9;  // +X:0.7  -X:0.9
-  return n.z > 0.0 ? 0.9 : 0.7;                                   // +Z:0.9  -Z:0.7
+  if (a.y >= a.x && a.y >= a.z) return n.y > 0.0 ? 1.0 : 0.5; // top/bottom
+  if (a.x >= a.z) return 0.6; // east/west (±X)
+  return 0.8;                  // north/south (±Z)
 }
 
 void main() {
@@ -68,9 +71,11 @@ void main() {
 export const vsBlockAO = /* glsl */`
 attribute float a_ao;
 varying vec3 vWorldNormal;
+varying vec3 vLocalNormal;
 varying vec2 vUv;
 varying float vAO;
 void main() {
+  vLocalNormal = normal;
   vWorldNormal = normalize(mat3(transpose(viewMatrix)) * (normalMatrix * normal));
   vUv = uv;
   vAO = a_ao;
@@ -81,14 +86,15 @@ void main() {
 export const fsBlockAO = /* glsl */`
 uniform sampler2D map;
 varying vec3 vWorldNormal;
+varying vec3 vLocalNormal; // unused here; declared to match vsBlockAO varyings
 varying vec2 vUv;
 varying float vAO;
 
 float faceShading(vec3 n) {
   vec3 a = abs(n);
-  if (a.y >= a.x && a.y >= a.z) return n.y > 0.0 ? 1.0 : 0.7;
-  if (a.x >= a.z)                return n.x > 0.0 ? 0.7 : 0.9;
-  return n.z > 0.0 ? 0.9 : 0.7;
+  if (a.y >= a.x && a.y >= a.z) return n.y > 0.0 ? 1.0 : 0.5;
+  if (a.x >= a.z)                return n.x > 0.0 ? 0.7 : 0.8;
+  return n.z > 0.0 ? 0.8 : 0.7;
 }
 
 void main() {
@@ -110,23 +116,29 @@ uniform sampler2D mapSide;
 uniform sampler2D mapTop;
 uniform sampler2D mapBot;
 varying vec3 vWorldNormal;
+varying vec3 vLocalNormal;
 varying vec2 vUv;
 
+// Directional shading based on world-space orientation (correct for rotated blocks).
 float faceShading(vec3 n) {
   vec3 a = abs(n);
-  if (a.y >= a.x && a.y >= a.z) return n.y > 0.0 ? 1.0 : 0.7;
-  if (a.x >= a.z)                return n.x > 0.0 ? 0.7 : 0.9;
-  return n.z > 0.0 ? 0.9 : 0.7;
+  if (a.y >= a.x && a.y >= a.z) return n.y > 0.0 ? 1.0 : 0.5;
+  if (a.x >= a.z)                return n.x > 0.0 ? 0.7 : 0.8;
+  return n.z > 0.0 ? 0.8 : 0.7;
 }
 
 void main() {
-  vec3 a = abs(normalize(vWorldNormal));
+  // Texture selection uses model-space (local) normal so top/side/bot texture
+  // maps to the correct face of the block model regardless of display transform.
+  vec3 ln = normalize(vLocalNormal);
+  vec3 la = abs(ln);
   vec4 color;
-  if (a.y >= a.x && a.y >= a.z)
-    color = vWorldNormal.y > 0.0 ? texture2D(mapTop, vUv) : texture2D(mapBot, vUv);
+  if (la.y >= la.x && la.y >= la.z)
+    color = ln.y > 0.0 ? texture2D(mapTop, vUv) : texture2D(mapBot, vUv);
   else
     color = texture2D(mapSide, vUv);
   if (color.a < 0.1) discard;
+  // Shading uses world-space normal — which direction the face actually points.
   color.rgb *= faceShading(normalize(vWorldNormal));
   gl_FragColor = color;
 }

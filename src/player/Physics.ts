@@ -14,6 +14,9 @@ import type { World } from "../world/World";
 const HALF_WIDTH = 0.3;
 const HEIGHT = 1.8;
 const EYE_HEIGHT = 1.62;
+const CROUCH_HEIGHT = 1.2;
+const CROUCH_EYE_HEIGHT = 1.0;
+const CROUCH_SPEED = 3.4;
 
 // 1.05 lets the player step up stairs (adjacent stair tops are 1.0 apart)
 // and half-slabs, while still blocking 2-block walls.
@@ -22,7 +25,7 @@ const GRAVITY = 50;
 const TERMINAL_VELOCITY = -50;
 const JUMP_FORCE = 15;
 const WALK_SPEED = 5;
-const SPRINT_SPEED = 8;
+const SLOW_SPEED = 2.5;
 const FLY_SPEED = 20;
 const FLY_VERTICAL_SPEED = 15;
 
@@ -36,6 +39,7 @@ export class PlayerPhysics {
   readonly velocity = new THREE.Vector3();
   grounded = false;
   flying = false;
+  crouching = false;
 
   private readonly spawn: THREE.Vector3;
 
@@ -51,13 +55,17 @@ export class PlayerPhysics {
   }
 
   get eyeHeight() {
-    return EYE_HEIGHT;
+    return this.crouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
+  }
+
+  private currentHeight() {
+    return this.crouching ? CROUCH_HEIGHT : HEIGHT;
   }
 
   private aabbAt(pos: THREE.Vector3): AABB {
     return {
       minX: pos.x - HALF_WIDTH, maxX: pos.x + HALF_WIDTH,
-      minY: pos.y, maxY: pos.y + HEIGHT,
+      minY: pos.y, maxY: pos.y + this.currentHeight(),
       minZ: pos.z - HALF_WIDTH, maxZ: pos.z + HALF_WIDTH,
     };
   }
@@ -198,7 +206,7 @@ export class PlayerPhysics {
     }
   }
 
-  update(dt: number, wishX: number, wishZ: number, sprint: boolean, wishY = 0) {
+  update(dt: number, wishX: number, wishZ: number, slow: boolean, wishY = 0) {
     dt = Math.min(dt, 1 / 20);
     if (this.position.y < -5) { this.respawn(); return; }
 
@@ -210,17 +218,45 @@ export class PlayerPhysics {
         this.position.y += (wishY / fullLen) * FLY_SPEED * dt;
         this.position.z += (wishZ / fullLen) * FLY_SPEED * dt;
       }
-      this.velocity.set(0, 0, 0);
+      this.velocity.x = 0;
+      this.velocity.y = 0;
+      this.velocity.z = 0;
       this.grounded = false;
       return;
     }
 
     this.velocity.y = Math.max(this.velocity.y - GRAVITY * dt, TERMINAL_VELOCITY);
 
-    const speed = sprint ? SPRINT_SPEED : WALK_SPEED;
+    // If crouching was cleared this frame, check that standing up won't embed us in a block.
+    if (!this.crouching) {
+      const standTest = this.position.clone();
+      const crouchAABB: AABB = {
+        minX: standTest.x - HALF_WIDTH, maxX: standTest.x + HALF_WIDTH,
+        minY: standTest.y, maxY: standTest.y + HEIGHT,
+        minZ: standTest.z - HALF_WIDTH, maxZ: standTest.z + HALF_WIDTH,
+      };
+      let standBlocked = false;
+      const x0 = Math.floor(crouchAABB.minX), x1 = Math.floor(crouchAABB.maxX - 1e-6);
+      const y0 = Math.floor(crouchAABB.minY), y1 = Math.floor(crouchAABB.maxY - 1e-6);
+      const z0 = Math.floor(crouchAABB.minZ), z1 = Math.floor(crouchAABB.maxZ - 1e-6);
+      outer: for (let x = x0; x <= x1; x++) {
+        for (let y = y0; y <= y1; y++) {
+          for (let z = z0; z <= z1; z++) {
+            if (this.blockSolid(x, y, z, crouchAABB.minY, crouchAABB.maxY)) { standBlocked = true; break outer; }
+          }
+        }
+      }
+      if (standBlocked) this.crouching = true;
+    }
+
+    const speed = this.crouching ? CROUCH_SPEED : slow ? SLOW_SPEED : WALK_SPEED;
     const len = Math.hypot(wishX, wishZ) || 1;
-    const vx = (wishX / len) * speed;
-    const vz = (wishZ / len) * speed;
+    const vx = wishX !== 0 || wishZ !== 0 ? (wishX / len) * speed : 0;
+    const vz = wishX !== 0 || wishZ !== 0 ? (wishZ / len) * speed : 0;
+
+    // Store XZ speed so external systems (crosshair, etc.) can read it.
+    this.velocity.x = vx;
+    this.velocity.z = vz;
 
     this.moveY(this.velocity.y * dt);
     this.grounded = this.checkGrounded();
