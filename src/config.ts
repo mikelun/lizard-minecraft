@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Ported from escape-tsuami-client/src/game/map/config.ts, render distance tuned
 // down since terrain now generates on the fly (no server/back-end feeding chunks).
 

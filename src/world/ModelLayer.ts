@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // ModelLayer — renders custom 3D models for blocks that the cube mesher skips.
 // Uses JsonModelLoader which ports the vberlier/json-model-viewer approach to
 // modern Three.js BufferGeometry.

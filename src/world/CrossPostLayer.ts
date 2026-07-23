@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // CrossPostLayer — renders iron_bars, glass_pane, and oak_fence with correct
 // Minecraft geometry including neighbour-connection arms.
 //

@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // SlabLayer — renders half-height slab blocks (0.5 units tall, bottom-aligned)
 // as batched geometry with proper Minecraft textures.
 // Each slab type gets its own material+geometry batch so textures can differ.

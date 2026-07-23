@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Ported from escape-tsuami-client/src/game/map/worker/chunkRendererMesh.ts
 // (the confirmed-live greedy mesher used by ChunkRenderer.ts's BaseInstance).
 // Algorithm is unchanged; only the message field names are adapted from the

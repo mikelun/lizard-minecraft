@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // MC world data loader — replaces procedural terrain generation.
 // Reads public/world/world.bin on first access.
 

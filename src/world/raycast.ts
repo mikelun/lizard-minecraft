@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Ported from escape-tsuami-client/src/game/utils/raycast.ts's voxel DDA core,
 // decoupled from the `game` singleton: takes an `isSolid(x,y,z)` callback
 // (backed by World.isSolid) instead of reaching into a global chunk store.

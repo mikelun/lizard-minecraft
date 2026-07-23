@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // NEW: DOM HUD overlay (crosshair, hotbar, debug readout, pointer-lock prompt).
 // Nothing here is ported -- the source repo's UI is React/Zustand-driven and
 // doesn't separate out cleanly.

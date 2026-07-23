@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Reimplements the voxel-AABB collision core of
 // escape-tsuami-client/src/game/player/physics.ts (buildPlayerBoxAt,
 // collectNearbyVoxelBoxes, moveAxisWithStep's auto-step-up-a-ledge behavior,
@@ -43,6 +44,12 @@ export class PlayerPhysics {
 
   private readonly spawn: THREE.Vector3;
 
+  // Pre-allocated temporaries — reused every frame to avoid GC pressure.
+  private readonly _tmpA  = new THREE.Vector3();
+  private readonly _tmpB  = new THREE.Vector3();
+  private readonly _tmpC  = new THREE.Vector3();
+  private readonly _aabb: AABB = { minX:0, minY:0, minZ:0, maxX:0, maxY:0, maxZ:0 };
+
   constructor(private world: World, spawn: THREE.Vector3) {
     this.spawn = spawn.clone();
     this.position = spawn.clone();
@@ -63,11 +70,11 @@ export class PlayerPhysics {
   }
 
   private aabbAt(pos: THREE.Vector3): AABB {
-    return {
-      minX: pos.x - HALF_WIDTH, maxX: pos.x + HALF_WIDTH,
-      minY: pos.y, maxY: pos.y + this.currentHeight(),
-      minZ: pos.z - HALF_WIDTH, maxZ: pos.z + HALF_WIDTH,
-    };
+    const h = this.currentHeight();
+    this._aabb.minX = pos.x - HALF_WIDTH; this._aabb.maxX = pos.x + HALF_WIDTH;
+    this._aabb.minY = pos.y;              this._aabb.maxY = pos.y + h;
+    this._aabb.minZ = pos.z - HALF_WIDTH; this._aabb.maxZ = pos.z + HALF_WIDTH;
+    return this._aabb;
   }
 
   /** Returns whether block (bx,by,bz) collides with the player AABB whose
@@ -111,9 +118,9 @@ export class PlayerPhysics {
     let moved = 0;
     while (remaining > 0) {
       const d = Math.min(step, remaining);
-      const test = this.position.clone();
-      test[axis] += moved + d * dir;
-      if (this.collides(this.aabbAt(test))) break;
+      this._tmpA.copy(this.position);
+      this._tmpA[axis] += moved + d * dir;
+      if (this.collides(this.aabbAt(this._tmpA))) break;
       moved += d * dir;
       remaining -= d;
     }
@@ -136,9 +143,9 @@ export class PlayerPhysics {
     let hi = 1;
     for (let i = 0; i < 12; i++) {
       const mid = (lo + hi) / 2;
-      const probe = this.position.clone();
-      probe[axis] += delta * mid;
-      if (this.collides(this.aabbAt(probe))) hi = mid;
+      this._tmpA.copy(this.position);
+      this._tmpA[axis] += delta * mid;
+      if (this.collides(this.aabbAt(this._tmpA))) hi = mid;
       else lo = mid;
     }
     return lo;
@@ -146,39 +153,36 @@ export class PlayerPhysics {
 
   private moveAxisWithStep(axis: "x" | "z", delta: number) {
     if (delta === 0) return;
-    const target = this.position.clone();
-    target[axis] += delta;
-    if (!this.collides(this.aabbAt(target))) {
-      this.position[axis] = target[axis];
+
+    // _tmpA = target (move along axis)
+    this._tmpA.copy(this.position);
+    this._tmpA[axis] += delta;
+    if (!this.collides(this.aabbAt(this._tmpA))) {
+      this.position[axis] = this._tmpA[axis];
       return;
     }
 
     // Blocked -- try stepping up onto a ledge up to STEP_HEIGHT tall BEFORE
-    // falling back to a partial slide-to-flush. Trying the slide first meant
-    // the player stopped dead against every single-block terrain edge
-    // (ubiquitous on any sloped ground, since the heightmap quantizes to
-    // whole blocks) and only actually stepped up on the FOLLOWING frame once
-    // already flush against it -- a visible stall-then-hop on nearly every
-    // step. Attempting the step immediately, on the same frame the obstacle
-    // is first hit, collapses that into one smooth motion instead.
-    const raised = this.position.clone();
-    raised.y += STEP_HEIGHT;
-    const raisedTarget = raised.clone();
-    raisedTarget[axis] += delta;
+    // falling back to a partial slide-to-flush.
+    // _tmpB = raised position, _tmpC = raised + moved along axis
+    this._tmpB.copy(this.position);
+    this._tmpB.y += STEP_HEIGHT;
+    this._tmpC.copy(this._tmpB);
+    this._tmpC[axis] += delta;
 
-    if (!this.collides(this.aabbAt(raised)) && !this.collides(this.aabbAt(raisedTarget))) {
-      // Find the lowest y (down to the original) that still clears, so we
-      // don't float above a ledge shorter than STEP_HEIGHT.
-      let landY = raisedTarget.y;
+    if (!this.collides(this.aabbAt(this._tmpB)) && !this.collides(this.aabbAt(this._tmpC))) {
+      // Find the lowest y (down to the original) that still clears.
+      let landY = this._tmpC.y;
+      const baseY = this._tmpC.y; // raisedTarget.y
       for (let dyStep = 0.05; dyStep <= STEP_HEIGHT; dyStep += 0.05) {
-        const testY = raisedTarget.y - dyStep;
+        const testY = baseY - dyStep;
         if (testY <= this.position.y) break;
-        const testPos = raisedTarget.clone();
-        testPos.y = testY;
-        if (this.collides(this.aabbAt(testPos))) break;
+        this._tmpA.copy(this._tmpC);
+        this._tmpA.y = testY;
+        if (this.collides(this.aabbAt(this._tmpA))) break;
         landY = testY;
       }
-      this.position[axis] = raisedTarget[axis];
+      this.position[axis] = this._tmpC[axis];
       this.position.y = Math.max(landY, this.position.y);
       return;
     }
@@ -193,9 +197,9 @@ export class PlayerPhysics {
   }
 
   private checkGrounded(): boolean {
-    const probe = this.position.clone();
-    probe.y -= 0.05;
-    return this.collides(this.aabbAt(probe));
+    this._tmpA.copy(this.position);
+    this._tmpA.y -= 0.05;
+    return this.collides(this.aabbAt(this._tmpA));
   }
 
   jump() {
@@ -229,24 +233,12 @@ export class PlayerPhysics {
 
     // If crouching was cleared this frame, check that standing up won't embed us in a block.
     if (!this.crouching) {
-      const standTest = this.position.clone();
-      const crouchAABB: AABB = {
-        minX: standTest.x - HALF_WIDTH, maxX: standTest.x + HALF_WIDTH,
-        minY: standTest.y, maxY: standTest.y + HEIGHT,
-        minZ: standTest.z - HALF_WIDTH, maxZ: standTest.z + HALF_WIDTH,
-      };
-      let standBlocked = false;
-      const x0 = Math.floor(crouchAABB.minX), x1 = Math.floor(crouchAABB.maxX - 1e-6);
-      const y0 = Math.floor(crouchAABB.minY), y1 = Math.floor(crouchAABB.maxY - 1e-6);
-      const z0 = Math.floor(crouchAABB.minZ), z1 = Math.floor(crouchAABB.maxZ - 1e-6);
-      outer: for (let x = x0; x <= x1; x++) {
-        for (let y = y0; y <= y1; y++) {
-          for (let z = z0; z <= z1; z++) {
-            if (this.blockSolid(x, y, z, crouchAABB.minY, crouchAABB.maxY)) { standBlocked = true; break outer; }
-          }
-        }
-      }
-      if (standBlocked) this.crouching = true;
+      // Temporarily force full height into the shared AABB (bypasses aabbAt's crouching branch).
+      const p = this.position;
+      this._aabb.minX = p.x - HALF_WIDTH; this._aabb.maxX = p.x + HALF_WIDTH;
+      this._aabb.minY = p.y;              this._aabb.maxY = p.y + HEIGHT;
+      this._aabb.minZ = p.z - HALF_WIDTH; this._aabb.maxZ = p.z + HALF_WIDTH;
+      if (this.collides(this._aabb)) this.crouching = true;
     }
 
     const speed = this.crouching ? CROUCH_SPEED : slow ? SLOW_SPEED : WALK_SPEED;

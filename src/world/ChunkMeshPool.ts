@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 /**
  * Column-level mesh pool: one THREE.Mesh per 16×WORLD_HEIGHT×16 column
  * instead of one per 16³ chunk.

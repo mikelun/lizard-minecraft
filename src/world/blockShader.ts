@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 /**
  * Shared ShaderMaterial factory for all custom block layers
  * (SlabLayer, StairLayer, CrossPostLayer, ChainBlockLayer, DoorLayer, AllObjectsLoader).

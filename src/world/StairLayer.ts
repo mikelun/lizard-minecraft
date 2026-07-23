@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // StairLayer — renders L-shaped stair blocks with proper Minecraft geometry.
 // Each stair block encodes facing direction and half (top/bottom) in its ID:
 //   id = base + facing * 2 + half

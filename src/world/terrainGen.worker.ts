@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 import { WORLD_HEIGHT } from "../config";
 
 let world: {

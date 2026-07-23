@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 /**
  * Minimal TGA decoder for Minecraft Bedrock block textures.
  * Supports type 2 (uncompressed RGBA/RGB) and type 10 (RLE RGBA/RGB).

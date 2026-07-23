@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 /**
  * CarLoader — renders the block_display "car" extracted from world 2.
  * 73 passenger-stacked entities, all at pos=[0,0,0]; actual visual placement

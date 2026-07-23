@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Fresh port of the input-handling shell of
 // escape-tsuami-client/src/game/player/controller.ts, trimmed to what a
 // standalone single-player game needs: WASD + jump + sprint, pointer-lock

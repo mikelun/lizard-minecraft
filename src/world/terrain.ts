@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 import { createNoise2D } from "simplex-noise";
 import { SEA_LEVEL, SNOW_LVL, STONE_LVL, WORLD_HEIGHT } from "../config";
 import { BType } from "./types";

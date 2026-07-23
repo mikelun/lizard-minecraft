@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Bullet hole decal system — canvas-texture PlaneGeometry pool.
 // spawnBulletHole() is called from the shot handler in main.ts after a hit.
 

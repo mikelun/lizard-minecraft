@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 /**
  * AllObjectsLoader — renders all block_display objects extracted from the
  * CS:GO Dust_2 Minecraft world (public/mc/models/all_objects.json).
@@ -295,11 +296,16 @@ export async function loadAllObjects(scene: THREE.Scene): Promise<THREE.Instance
     matrices: THREE.Matrix4[];
   }>();
 
+  // Max game Y for object origins (mc_y + 64). Objects above this are floating
+  // remnants of the removed elevated island and should be excluded.
+  const MAX_OBJECT_GAME_Y = 30;
+
   let entityCount = 0;
   for (const obj of data.objects) {
     if (obj.entities.length === 0) continue;
 
     const [mx, my, mz] = obj.origin;
+    if (my + 64 > MAX_OBJECT_GAME_Y) continue;
     const originMatrix = new THREE.Matrix4().makeTranslation(
       mx + MC_TO_GAME.dx,
       my + MC_TO_GAME.dy,

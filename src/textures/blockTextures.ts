@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 import * as THREE from "three";
 import { BType } from "../world/types";
 import type { BlockDef } from "../world/chunkMesh.worker";

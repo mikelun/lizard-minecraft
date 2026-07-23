@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Point Blank AK47 Demo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a1a; overflow: hidden; font-family: monospace; }
+canvas { display: block; }
+#ui {
+  position: fixed; top: 12px; left: 12px;
+  color: #fff; font-size: 13px; line-height: 1.8;
+  text-shadow: 0 1px 3px #000;
+  background: rgba(0,0,0,0.5); padding: 10px 14px; border-radius: 6px;
+}
+#ui button {
+  display: block; width: 100%; margin-top: 4px;
+  background: #333; color: #eee; border: 1px solid #555;
+  padding: 5px 10px; cursor: pointer; border-radius: 4px; font-size: 12px;
+}
+#ui button:hover { background: #444; }
+#ui button.active { background: #1a6; border-color: #2c8; color: #fff; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>Point Blank AK47 Demo</b><br>
+  <span id="anim-label">Animation: idle</span><br>
+  <button onclick="playAnim('idle')">Idle</button>
+  <button onclick="playAnim('fire')">Fire</button>
+  <button onclick="playAnim('reload')">Reload</button>
+  <button onclick="playAnim('draw')">Draw</button>
+  <button onclick="playAnim('inspect')">Inspect</button>
+  <br>
+  <span style="color:#aaa;font-size:11px">Drag to orbit · scroll to zoom</span>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scene
+// ─────────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x282828);
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(5, 12, 8);
+sun.castShadow = true;
+scene.add(sun);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 200);
+camera.position.set(2.5, 1.6, -2.5);  // front-right angle: Steve faces toward us with gun
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.2, 0);
+controls.update();
+
+// Floor
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(20, 20),
+  new THREE.MeshLambertMaterial({ color: 0x333333 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+scene.add(new THREE.GridHelper(20, 20, 0x444444, 0x3a3a3a));
+
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function parseKeys(obj) {
+  // Normalise keyframe data to [{t, vec, easing}] sorted by time
+  if (Array.isArray(obj)) {
+    return [{ t: 0, vec: [...obj], easing: 'linear' }];
+  }
+  return Object.entries(obj).map(([k, v]) => {
+    const t   = parseFloat(k);
+    let vec   = v?.vector ?? v;
+    if (!Array.isArray(vec)) vec = [0, 0, 0];
+    return { t, vec: [...vec], easing: v?.easing ?? 'linear' };
+  }).sort((a, b) => a.t - b.t);
+}
+
+function lerpFrames(frames, time, loopLen) {
+  if (!frames || frames.length === 0) return [0, 0, 0];
+  if (frames.length === 1) return [...frames[0].vec];
+  const t = loopLen > 0 ? time % loopLen : time;
+  for (let i = 0; i < frames.length - 1; i++) {
+    const a = frames[i], b = frames[i + 1];
+    if (t >= a.t && t <= b.t) {
+      let alpha = (t - a.t) / (b.t - a.t);
+      if (b.easing === 'easeInSine')      alpha = 1 - Math.cos(alpha * Math.PI / 2);
+      else if (b.easing === 'easeOutSine') alpha = Math.sin(alpha * Math.PI / 2);
+      else if (b.easing === 'easeInOutSine') alpha = -(Math.cos(Math.PI * alpha) - 1) / 2;
+      else if (b.easing === 'easeInCubic')  alpha = alpha * alpha * alpha;
+      else if (b.easing === 'easeOutCubic') alpha = 1 - Math.pow(1 - alpha, 3);
+      return a.vec.map((v, i) => v + (b.vec[i] - v) * alpha);
+    }
+  }
+  return [...frames[frames.length - 1].vec];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Box UV mapping for GeckoLib 1.12.0 format
+// Minecraft face layout (texels, from [uOff, vOff]):
+//   Top:    [uOff+sz .. uOff+sz+sx]        x  [vOff .. vOff+sz]
+//   Bottom: [uOff+2sz+sx .. uOff+2sz+2sx]  x  [vOff .. vOff+sz]
+//   West:   [uOff .. uOff+sz]              x  [vOff+sz .. vOff+sz+sy]
+//   North:  [uOff+sz .. uOff+sz+sx]        x  [vOff+sz .. vOff+sz+sy]
+//   East:   [uOff+sz+sx .. uOff+2sz+sx]    x  [vOff+sz .. vOff+sz+sy]
+//   South:  [uOff+2sz+sx .. uOff+2sz+2sx]  x  [vOff+sz .. vOff+sz+sy]
+// ─────────────────────────────────────────────────────────────────────────────
+function setBoxUV(geo, uOff, vOff, sx, sy, sz, tw, th) {
+  const uvArr = geo.getAttribute('uv').array;
+
+  // Write one face's 4 UV pairs into the flat attribute array.
+  // Three.js BoxGeometry vertex winding per face: TL, TR, BL, BR (in UV space)
+  // We map texel region [u0..u1] × [v0..v1] with optional flips.
+  function face(fi, u0, v0, u1, v1, flipU, flipV) {
+    const [au0, au1] = flipU ? [u1 / tw, u0 / tw] : [u0 / tw, u1 / tw];
+    const [av0, av1] = flipV ? [1 - v1 / th, 1 - v0 / th] : [1 - v0 / th, 1 - v1 / th];
+    // Vertex order: 0=(u0,v1) 1=(u1,v1) 2=(u0,v0) 3=(u1,v0) in UV coords
+    const b = fi * 8;
+    uvArr[b+0] = au0; uvArr[b+1] = av1;
+    uvArr[b+2] = au1; uvArr[b+3] = av1;
+    uvArr[b+4] = au0; uvArr[b+5] = av0;
+    uvArr[b+6] = au1; uvArr[b+7] = av0;
+  }
+
+  // Three.js face order: +X(East), -X(West), +Y(Top), -Y(Bottom), +Z(South), -Z(North)
+  face(0, uOff+sz+sx,   vOff+sz, uOff+2*sz+sx,  vOff+sz+sy, true,  false); // East
+  face(1, uOff,         vOff+sz, uOff+sz,         vOff+sz+sy, false, false); // West
+  face(2, uOff+sz,      vOff,    uOff+sz+sx,      vOff+sz,    false, true ); // Top
+  face(3, uOff+2*sz+sx, vOff,    uOff+2*sz+2*sx,  vOff+sz,    false, false); // Bottom
+  face(4, uOff+2*sz+sx, vOff+sz, uOff+2*sz+2*sx,  vOff+sz+sy, true,  false); // South
+  face(5, uOff+sz,      vOff+sz, uOff+sz+sx,      vOff+sz+sy, false, false); // North
+
+  geo.getAttribute('uv').needsUpdate = true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GeckoLib model builder
+// ─────────────────────────────────────────────────────────────────────────────
+function buildGeoModel(geoData, tex, S = 1 / 16) {
+  const g    = geoData['minecraft:geometry'][0];
+  const desc = g.description;
+  const tw   = desc.texture_width;
+  const th   = desc.texture_height;
+
+  // Index all bones by name
+  const boneDefs = {};
+  for (const b of g.bones) boneDefs[b.name] = b;
+
+  const boneGroups = {};
+  const root = new THREE.Group();
+
+  // Create a Group per bone
+  for (const name of Object.keys(boneDefs)) {
+    boneGroups[name] = new THREE.Group();
+    boneGroups[name].name = name;
+  }
+
+  // Position each bone relative to its parent's pivot, add meshes
+  for (const [name, bone] of Object.entries(boneDefs)) {
+    const grp        = boneGroups[name];
+    const pivot      = bone.pivot ?? [0, 0, 0];
+    const parentPiv  = bone.parent ? (boneDefs[bone.parent]?.pivot ?? [0, 0, 0]) : [0, 0, 0];
+
+    // GeckoLib: pivot coords are absolute in model space.
+    // Child bone's local position = (childPivot - parentPivot) * S
+    grp.position.set(
+      (pivot[0] - parentPiv[0]) * S,
+      (pivot[1] - parentPiv[1]) * S,
+      (pivot[2] - parentPiv[2]) * S,
+    );
+
+    if (bone.parent && boneGroups[bone.parent]) {
+      boneGroups[bone.parent].add(grp);
+    } else {
+      root.add(grp);
+    }
+
+    if (!bone.cubes) continue;
+
+    for (const cube of bone.cubes) {
+      const [ox, oy, oz] = cube.origin;
+      const [sx, sy, sz] = cube.size;
+      const inf  = cube.inflate ?? 0;
+      const asx  = (sx + 2 * inf) * S;
+      const asy  = (sy + 2 * inf) * S;
+      const asz  = (sz + 2 * inf) * S;
+
+      const geo  = new THREE.BoxGeometry(asx, asy, asz);
+      if (cube.uv && Array.isArray(cube.uv)) {
+        setBoxUV(geo, cube.uv[0], cube.uv[1], sx, sy, sz, tw, th);
+      }
+
+      const mat  = new THREE.MeshLambertMaterial({
+        map: tex, transparent: true, alphaTest: 0.05,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+
+      if (cube.pivot && cube.rotation) {
+        // Cube with its own pivot rotation
+        const cp  = cube.pivot;
+        const rot = cube.rotation;
+        const pg  = new THREE.Group();
+        pg.position.set(
+          (cp[0] - pivot[0]) * S,
+          (cp[1] - pivot[1]) * S,
+          (cp[2] - pivot[2]) * S,
+        );
+        pg.rotation.order = 'ZYX';
+        pg.rotation.z = THREE.MathUtils.degToRad(-rot[2]);
+        pg.rotation.y = THREE.MathUtils.degToRad(-rot[1]);
+        pg.rotation.x = THREE.MathUtils.degToRad(-rot[0]);
+        mesh.position.set(
+          (ox + sx / 2 + inf - cp[0]) * S,
+          (oy + sy / 2 + inf - cp[1]) * S,
+          (oz + sz / 2 + inf - cp[2]) * S,
+        );
+        pg.add(mesh);
+        grp.add(pg);
+      } else {
+        // Standard cube: position is relative to bone pivot
+        mesh.position.set(
+          (ox + sx / 2 + inf - pivot[0]) * S,
+          (oy + sy / 2 + inf - pivot[1]) * S,
+          (oz + sz / 2 + inf - pivot[2]) * S,
+        );
+        grp.add(mesh);
+      }
+    }
+  }
+
+  return { root, boneGroups };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GeckoLib animator (gun animations)
+// ─────────────────────────────────────────────────────────────────────────────
+class GeckoAnimator {
+  constructor(animData, boneGroups, S = 1 / 16) {
+    this.data       = animData.animations;
+    this.boneGroups = boneGroups;
+    this.S          = S;
+    this.current    = null;
+    this.time       = 0;
+    this._parsed    = {};
+  }
+
+  _parseAnim(name) {
+    if (this._parsed[name]) return this._parsed[name];
+    const anim   = this.data[name];
+    if (!anim) return null;
+    const parsed = { length: anim.animation_length ?? 1, loop: anim.loop ?? false, bones: {} };
+    for (const [bname, bdata] of Object.entries(anim.bones ?? {})) {
+      parsed.bones[bname] = {
+        rotation: bdata.rotation ? parseKeys(bdata.rotation) : null,
+        position: bdata.position ? parseKeys(bdata.position) : null,
+      };
+    }
+    this._parsed[name] = parsed;
+    return parsed;
+  }
+
+  play(name) {
+    const full = 'animation.model.' + name;
+    if (!this.data[full]) { console.warn('No gun anim:', full); return; }
+    this.current = this._parseAnim(full);
+    this.time    = 0;
+  }
+
+  update(dt) {
+    if (!this.current) return;
+    this.time += dt;
+    const { length, loop, bones } = this.current;
+    const S = this.S;
+    const t = loop ? this.time % length : Math.min(this.time, length);
+
+    for (const [bname, bdata] of Object.entries(bones)) {
+      const grp = this.boneGroups[bname];
+      if (!grp) continue;
+
+      if (bdata.rotation) {
+        const [rx, ry, rz] = lerpFrames(bdata.rotation, t, loop ? length : 0);
+        // GeckoLib→Three.js: negate all three (Z-axis flip inverts all rotation signs)
+        grp.rotation.order = 'XYZ';
+        grp.rotation.x = THREE.MathUtils.degToRad(-rx);
+        grp.rotation.y = THREE.MathUtils.degToRad(-ry);
+        grp.rotation.z = THREE.MathUtils.degToRad(-rz);
+      }
+      if (bdata.position) {
+        const [px, py, pz] = lerpFrames(bdata.position, t, loop ? length : 0);
+        // Position stored as base + delta
+        const bp = grp.userData.basePos ?? [0, 0, 0];
+        grp.position.set(
+          bp[0] + px * S,
+          bp[1] + py * S,
+          bp[2] - pz * S,  // negate Z for coordinate flip
+        );
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Steve model  (no skin UV — solid colors; clean proportions)
+// All coordinates in blocks.  Feet at y=0, top of head at y=1.8.
+// ─────────────────────────────────────────────────────────────────────────────
+// Minecraft Steve proportions (in pixels → blocks at 1/16):
+//   Head:      8×8×8  = 0.5×0.5×0.5  blocks
+//   Torso:     8×12×4 = 0.5×0.75×0.25
+//   Each arm:  4×12×4 = 0.25×0.75×0.25
+//   Each leg:  4×12×4 = 0.25×0.75×0.25
+//
+// Skeleton layout (pivot = joint centre):
+//   root (y=0)
+//     body (y=0)            — lower torso pivot (waist)
+//       right_leg (x=-0.125, y=0)  — hip pivots at waist
+//       left_leg  (x=+0.125, y=0)
+//     torso (y=0.75)        — upper torso pivot (shoulders/neck base)
+//       head (y=0.75)       — neck (relative to torso)
+//       right_arm (x=-0.3125, y=0.625)  — shoulder
+//       left_arm  (x=+0.3125, y=0.625)
+// ─────────────────────────────────────────────────────────────────────────────
+// Steve proportions: 2 blocks tall (32px).
+// Feet y=0, legs to waist=0.75, torso to neck=1.5, head top=2.0.
+function buildSteve() {
+  const mat = c => new THREE.MeshLambertMaterial({ color: c });
+  function box(w, h, d, color) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color));
+    m.castShadow = true;
+    return m;
+  }
+
+  const root = new THREE.Group(); root.name = 'steveRoot';
+  const grps = {};
+  const make = (name, parent) => {
+    const g = new THREE.Group(); g.name = name;
+    grps[name] = g;
+    (parent ? grps[parent] : root).add(g);
+    return g;
+  };
+
+  // Hierarchy — matches Point Blank player animation bone names
+  make('body');       // waist/hip pivot at world y=0.75
+  make('torso',     'body');    // upper-body pivot, same world y as body
+  make('head',      'torso');   // neck/head pivot at world y=1.5
+  make('right_arm', 'torso');   // right shoulder
+  make('left_arm',  'torso');   // left shoulder
+  make('right_leg', 'body');    // right hip
+  make('left_leg',  'body');    // left hip
+
+  // Positions relative to parent (in blocks).
+  // body sits at y=0.75 so legs reach y=0 (feet on floor).
+  grps['body'].position.set(0, 0.75, 0);          // world y=0.75
+  grps['torso'].position.set(0, 0, 0);            // same pivot as body
+  grps['head'].position.set(0, 0.75, 0);          // world y=1.5
+  grps['right_arm'].position.set(-0.3125, 0.5625, 0); // shoulder  world y=1.3125
+  grps['left_arm'].position.set( 0.3125, 0.5625, 0);
+  grps['right_leg'].position.set(-0.125, 0, 0);   // hip: world y=0.75
+  grps['left_leg'].position.set( 0.125, 0, 0);
+
+  // Torso mesh: 8×12px = 0.5×0.75 blocks, extends upward from waist
+  const torsoMesh = box(0.5, 0.75, 0.25, 0x3355aa);
+  torsoMesh.position.set(0, 0.375, 0);   // center = y=0.375 above waist = world y=1.125
+  grps['torso'].add(torsoMesh);
+
+  // Head mesh: 8×8×8px = 0.5 cube
+  const headMesh = box(0.5, 0.5, 0.5, 0xd4a97a);
+  headMesh.position.set(0, 0.25, 0);     // center = y=0.25 above neck = world y=1.75
+  grps['head'].add(headMesh);
+
+  // Arms: 4×12×4px = 0.25×0.75×0.25 blocks, hang below shoulder
+  const rArmMesh = box(0.25, 0.75, 0.25, 0xd4a97a);
+  rArmMesh.position.set(0, -0.375, 0);  // center = y=-0.375 below shoulder = world y=0.9375
+  grps['right_arm'].add(rArmMesh);
+
+  const lArmMesh = box(0.25, 0.75, 0.25, 0xd4a97a);
+  lArmMesh.position.set(0, -0.375, 0);
+  grps['left_arm'].add(lArmMesh);
+
+  // Legs: 4×12×4px = 0.25×0.75×0.25 blocks, hang below hip
+  const rLegMesh = box(0.25, 0.75, 0.25, 0x223366);
+  rLegMesh.position.set(0, -0.375, 0);  // center = world y=0.375; bottom = world y=0 ✓
+  grps['right_leg'].add(rLegMesh);
+
+  const lLegMesh = box(0.25, 0.75, 0.25, 0x223366);
+  lLegMesh.position.set(0, -0.375, 0);
+  grps['left_leg'].add(lLegMesh);
+
+  return { root, grps };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Player animator  (Point Blank player_rifle animations)
+// ONLY applies rotations — positions are in PB's coord space and don't map to Steve.
+// ─────────────────────────────────────────────────────────────────────────────
+class PlayerAnimator {
+  constructor(animData, boneGroups) {
+    this.data       = animData.animations;
+    this.boneGroups = boneGroups;
+    this.current    = null;
+    this.time       = 0;
+    this._parsed    = {};
+  }
+
+  _parseAnim(name) {
+    if (this._parsed[name]) return this._parsed[name];
+    const anim = this.data[name];
+    if (!anim) return null;
+    const parsed = { length: anim.animation_length ?? 1, loop: anim.loop ?? false, bones: {} };
+    for (const [bname, bdata] of Object.entries(anim.bones ?? {})) {
+      parsed.bones[bname] = {
+        rotation: bdata.rotation ? parseKeys(bdata.rotation) : null,
+      };
+    }
+    this._parsed[name] = parsed;
+    return parsed;
+  }
+
+  play(name) {
+    const full = 'animation.model.' + name;
+    if (!this.data[full]) { console.warn('No player anim:', full); return; }
+    this.current = this._parseAnim(full);
+    this.time    = 0;
+  }
+
+  update(dt) {
+    if (!this.current) return;
+    this.time += dt;
+    const { length, loop, bones } = this.current;
+    const t = loop ? this.time % length : Math.min(this.time, length);
+
+    for (const [bname, bdata] of Object.entries(bones)) {
+      const grp = this.boneGroups[bname];
+      if (!grp) continue;
+
+      if (bdata.rotation) {
+        const [rx, ry, rz] = lerpFrames(bdata.rotation, t, loop ? length : 0);
+        // GeckoLib→Three.js: negate all three (Z-axis flip inverts all rotation signs)
+        grp.rotation.order = 'XYZ';
+        grp.rotation.x = THREE.MathUtils.degToRad(-rx);
+        grp.rotation.y = THREE.MathUtils.degToRad(-ry);
+        grp.rotation.z = THREE.MathUtils.degToRad(-rz);
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Load assets and wire everything together
+// ─────────────────────────────────────────────────────────────────────────────
+const texLoader = new THREE.TextureLoader();
+const loadTex   = url => new Promise(res => texLoader.load(url, t => {
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  res(t);
+}));
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+let gunAnim    = null;
+let playerAnim = null;
+
+// UI button state
+const btns = document.querySelectorAll('#ui button');
+window.playAnim = function(name) {
+  document.getElementById('anim-label').textContent = 'Animation: ' + name;
+  btns.forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === name));
+  if (gunAnim)    gunAnim.play(name);
+  const playerMap = { idle: 'idle', fire: 'shooting', reload: 'reload', draw: 'idle', inspect: 'idle' };
+  if (playerAnim) playerAnim.play(playerMap[name] ?? 'idle');
+};
+
+async function main() {
+  const [geoData, gunAnimData, playerAnimData, gunTex] = await Promise.all([
+    fetchJSON('/pointblank/models/ak47.geo.json'),
+    fetchJSON('/pointblank/animations/ak47.animation.json'),
+    fetchJSON('/pointblank/animations/player_rifle.animation.json'),
+    loadTex('/pointblank/textures/ak47.png'),
+  ]);
+
+  // ── Build AK47 model ───────────────────────────────────────────────────────
+  const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData, gunTex, 1 / 16);
+
+  // Hide the first-person arms built into the gun model —
+  // Steve provides his own arms.
+  for (const name of ['rightarm', 'leftarm']) {
+    if (gunBones[name]) gunBones[name].visible = false;
+  }
+
+  // Store base positions for delta-position animations
+  for (const grp of Object.values(gunBones)) {
+    grp.userData.basePos = [grp.position.x, grp.position.y, grp.position.z];
+  }
+
+  // Scale the whole gun down. The model is designed for first-person view
+  // where it fills the screen; we need it to be ~1.5 blocks long for third-person.
+  // At S=1/16 the barrel span is ~6.7 blocks; 0.22× makes it ~1.5 blocks.
+  const GUN_SCALE = 0.22;
+
+  const gunContainer = new THREE.Group(); gunContainer.name = 'gunContainer';
+  gunContainer.add(gunRoot);
+  gunContainer.scale.setScalar(GUN_SCALE);
+
+  // Gun orientation in right_arm's local space.
+  //
+  // The idle animation rotates right_arm.rotation.x = -90° (in Three.js after axis mapping).
+  // Rx(-90°) maps: arm_local +Y → world -Z (into scene = forward), arm_local +Z → world +Y.
+  //
+  // The gun model has:
+  //   barrel at -Z in GeckoLib (muzzle at z≈-67px, stock at z≈+40px)
+  //   grip/main pivot at [0, 20px, 0] in GeckoLib = container local (0, 1.25*GUN_SCALE, 0)
+  //
+  // We want the barrel (-Z in GeckoLib) to point in world -Z (forward).
+  // In arm local space, arm_local +Y → world -Z.  So we need gun's -Z → arm_local +Y,
+  // i.e. gun's +Z → arm_local -Y.
+  //
+  // Rx(+90°) on the container: container +Z → arm_local +Y.  Then gun's -Z → arm_local -Y
+  // → world +Z (toward viewer) — still wrong.
+  //
+  // What we need: gun barrel (-Z) → arm_local +Y.
+  // Rx(-90°) on container: container +Z → arm_local -Y, container -Z → arm_local +Y. ✓
+  //
+  // Gun orientation in arm's local space.
+  // The idle animation applies arm.rotation.x = +90° (negated from GeckoLib -90°).
+  // Rx(+90°): arm_local -Y → world -Z (forward/into scene) — arm hangs forward. ✓
+  //
+  // Gun barrel is at -Z in GeckoLib space.
+  // We need container.rotation such that container_local -Z → arm_local -Y → world -Z.
+  // Rx(-90°) * (0,0,-1) = (0,-1,0) = arm_local -Y ✓
+  gunContainer.rotation.order = 'XYZ';
+  gunContainer.rotation.x = -Math.PI / 2;
+
+  // Main bone (grip) at container_local (0, 1.25*GUN_SCALE, 0).
+  // After Rx(-90°): → arm_local (0, 0, -1.25*GUN_SCALE).
+  // Hand at arm_local (0, -0.75, 0).
+  // So container position in arm_local: (0, -0.75, 0) - (0, 0, -1.25*GUN_SCALE) = (0, -0.75, 1.25*GUN_SCALE).
+  gunContainer.position.set(-0.05, -0.75, 1.25 * GUN_SCALE);
+
+  // ── Build Steve ─────────────────────────────────────────────────────────────
+  const { root: steveRoot, grps: steveBones } = buildSteve();
+  steveRoot.position.set(0, 0, 0);
+  scene.add(steveRoot);
+
+  // Attach gun to right arm
+  steveBones['right_arm'].add(gunContainer);
+
+  // ── Animators ───────────────────────────────────────────────────────────────
+  gunAnim    = new GeckoAnimator(gunAnimData, gunBones, 1 / 16);
+  playerAnim = new PlayerAnimator(playerAnimData, steveBones);
+
+  // Start idle
+  window.playAnim('idle');
+  // Mark idle button active
+  btns.forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === 'idle'));
+
+  // ── Render loop ─────────────────────────────────────────────────────────────
+  let last = performance.now();
+  function animate() {
+    requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt  = Math.min((now - last) / 1000, 0.05);
+    last = now;
+
+    gunAnim.update(dt);
+    playerAnim.update(dt);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+}
+
+main().catch(e => console.error('Init error:', e));
+</script>
+</body>
+</html>

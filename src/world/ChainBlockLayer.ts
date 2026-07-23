@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // ChainBlockLayer — renders chain blocks using the exact Minecraft chain.json geometry:
 // two thin diagonal quads (zero-depth planes rotated 45° around Y axis).
 // UV: element 1 uses chain.png cols 0-3/16, element 2 uses cols 3/16-6/16.

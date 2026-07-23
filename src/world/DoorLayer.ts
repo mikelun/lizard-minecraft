@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // DoorLayer — renders oak doors and trapdoors with correct Minecraft geometry.
 //
 // Oak door (closed):

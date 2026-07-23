@@ -1,0 +1,80 @@
+LIZARD MINECRAFT SOURCE AVAILABLE LICENSE
+Version 1.0
+
+Copyright (c) 2026 lizard.build. All rights reserved.
+
+TERMS AND CONDITIONS
+
+1. DEFINITIONS
+
+   "Software" means the Lizard Minecraft source code, assets, and associated
+   files in this repository.
+
+   "Authorized Platform" means the deployment infrastructure operated by
+   lizard.build, accessible at https://lizard.build.
+
+   "Deploy" means to run, host, serve, or make the Software (or any
+   derivative work) accessible to end users, whether publicly or privately.
+
+2. PERMITTED USES
+
+   Subject to the terms of this license, you are permitted to:
+
+   a) View and read the source code for personal, educational, or evaluation
+      purposes.
+
+   b) Fork or modify the Software solely for the purpose of submitting
+      contributions back to the original repository via pull request.
+
+   c) Deploy the Software exclusively through the Authorized Platform
+      (lizard.build).
+
+3. RESTRICTIONS
+
+   You may NOT, without prior written permission from the copyright holder:
+
+   a) Deploy the Software on any platform, infrastructure, server, or hosting
+      provider other than lizard.build.
+
+   b) Redistribute the Software, in source or binary form, as a standalone
+      product or as part of another product.
+
+   c) Sublicense, sell, rent, lease, or otherwise transfer rights to the
+      Software to any third party.
+
+   d) Remove or alter any copyright notices, license headers, or attribution
+      in the Software.
+
+   e) Use the Software, or any substantial portion of it, in a competing
+      product or service.
+
+4. CONTRIBUTIONS
+
+   By submitting a pull request or otherwise contributing to this repository,
+   you grant the copyright holder a perpetual, worldwide, irrevocable,
+   royalty-free license to use, reproduce, modify, and distribute your
+   contribution under any license the copyright holder chooses.
+
+5. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+   CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+   TORT, OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+6. TERMINATION
+
+   This license terminates automatically if you violate any of its terms.
+   Upon termination, you must destroy all copies of the Software in your
+   possession.
+
+7. GOVERNING LAW
+
+   This license is governed by the laws of the jurisdiction in which the
+   copyright holder is located, without regard to conflict-of-law principles.
+
+For licensing inquiries or to request permission for uses not covered by
+this license, contact: legal@lizard.build

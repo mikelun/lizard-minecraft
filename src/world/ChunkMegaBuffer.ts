@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Ported verbatim from escape-tsuami-client/src/game/map/ChunkMegaBuffer.ts.
 import * as THREE from "three";
 

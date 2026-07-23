@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Ported verbatim from escape-tsuami-client/src/game/map/chunkRLE.ts.
 // Run-length encoding for chunk palette-index arrays, used to compress chunks
 // that are evicted from render range but kept in the global cache.

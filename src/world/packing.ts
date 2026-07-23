@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Ported verbatim from escape-tsuami-client/src/game/map/worker/utils.ts.
 // Bit-packing shared between the greedy mesher (chunkMesh.worker.ts) and the
 // chunk vertex shader (shaders.ts) — the two sides must agree on layout.

@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Ported from escape-tsuami-client/src/game/map/worker/types.ts, BType trimmed
 // down to the blocks this project actually uses.
 

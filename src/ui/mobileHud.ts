@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 /**
  * Mobile HUD overlay: virtual joystick (left) + fire/jump/reload buttons (right).
  * Call setupMobileControls() only when controller.isMobile is true.

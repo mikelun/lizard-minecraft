@@ -1,13 +1,14 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // NEW bootstrap: scene/renderer setup, game loop, target-block outline, HUD wiring.
 
 import * as THREE from "three";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { World } from "./world/World";
 import { ModelLayer } from "./world/ModelLayer";
 import { PlayerController } from "./player/Controller";
 import { createHud } from "./ui/hud";
 import { buildBlockTextureAtlas } from "./textures/blockTextures";
 import { loadAllObjects } from "./world/AllObjectsLoader";
+import { loadMarketingBanners } from "./world/MarketingBanners";
 import { ChainBlockLayer } from "./world/ChainBlockLayer";
 import { SlabLayer } from "./world/SlabLayer";
 import { CrossPostLayer } from "./world/CrossPostLayer";
@@ -16,6 +17,8 @@ import { StairLayer } from "./world/StairLayer";
 import { raycastWithNormal } from "./world/raycast";
 import { spawnBulletHole } from "./world/BulletHoles";
 import { setupMobileControls, type MobileControls } from "./ui/mobileHud";
+import { buildGeoModel, GeckoAnimator } from "./world/GeckoLibGun";
+import { SteveCharacter } from "./world/SteveCharacter";
 
 const app = document.getElementById("app")!;
 
@@ -78,6 +81,7 @@ try {
 await world.loadBin();
 
 const allObjectMeshes = await loadAllObjects(scene);
+await loadMarketingBanners(scene);
 
 const controller = new PlayerController(
   world,
@@ -92,25 +96,47 @@ if (spawnPitch !== 0 || spawnYaw !== 0) {
 }
 
 // ── Weapon scene (rendered on top of main scene each frame) ──────────────────
-// Using a separate THREE.Scene + camera so the weapon is never clipped by
-// world geometry and doesn't need depthTest hacks.
+// Separate THREE.Scene + camera so the weapon is never clipped by world geometry.
+// Only the right arm (Minecraft skin-colored) + gun are visible — CS:GO style.
+// The weapon camera tracks the main camera rotation so the viewmodel follows aim.
 
 const weaponScene  = new THREE.Scene();
 const weaponCamera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.01, 10);
-weaponScene.add(new THREE.AmbientLight(0xffffff, 1.0));
-const weaponSun = new THREE.DirectionalLight(0xffffff, 0.6);
-weaponSun.position.set(1, 2, 1);
+weaponScene.add(weaponCamera);
+// Ambient+directional intensity here directly determines how dark a matte-black
+// gun texture reads in-game — the original 0.8/0.7 combo washed a genuinely
+// near-black texture (measured ~RGB 15-55) out to a rendered mid-gray (~RGB
+// 82-130, nearly 3x brighter than the source texture). Lowered to preserve the
+// real material darkness while still showing some directional shading.
+weaponScene.add(new THREE.AmbientLight(0xffffff, 0.3));
+const weaponSun = new THREE.DirectionalLight(0xffffff, 0.35);
+weaponSun.position.set(5, 10, 5);
 weaponScene.add(weaponSun);
 
-// Weapon group: positioned in front-right of the weapon camera (view space offset).
-// Everything inside this group moves with the weapon camera.
-const weaponGroup = new THREE.Group();
-weaponCamera.add(weaponGroup);
+// ── Viewmodel group (child of weaponCamera = fixed in screen space) ───────────
+// Matches TACZ's own convention: the gun model carries a "camera" bone marking
+// where the player's eye sits relative to the gun. gunContainer is positioned
+// (once the model loads, below) so that bone lands exactly at this group's
+// origin — i.e. at the weaponCamera itself — instead of using a hand-tuned
+// constant offset.
+const viewmodelGroup = new THREE.Group();
+weaponCamera.add(viewmodelGroup);
 weaponScene.add(weaponCamera);
 
-// Initial view-space offset: right/down/forward in camera local space.
-// The GLB will be added inside weaponGroup; scale/orientation adjusted after load.
-const WEAPON_OFFSET = new THREE.Vector3(0.18, -0.22, -0.34);
+const gunContainer = new THREE.Group();
+gunContainer.name = "gunContainer";
+viewmodelGroup.add(gunContainer);
+// Base (un-swayed) position/orientation, set once after idle_view alignment in
+// the async loader below; the tick loop adds kick/reload sway on top each frame.
+const gunBasePosition = new THREE.Vector3();
+const gunBaseQuaternion = new THREE.Quaternion();
+const kickQuaternion = new THREE.Quaternion();
+const kickEuler = new THREE.Euler();
+
+// steveRoot alias kept for tick-loop sway code (points at gunContainer, which
+// now carries both the gun and — as children of its own righthand_pos/
+// lefthand_pos bones — the arm meshes, so sway/kick moves everything together).
+const steveRoot = gunContainer;
 
 // ── Bullet tracer pool ───────────────────────────────────────────────────────
 // Thin lines that appear briefly and fade — matches CS:GO tracer aesthetic.
@@ -263,72 +289,187 @@ controller.onShot = (origin, dirIn) => {
   shootBloom = Math.min(shootBloom + BLOOM_PER_SHOT, 70);
 };
 
-// ── Load AK-47 GLB model ─────────────────────────────────────────────────────
+// ── Load TACZ M4A1 (GeckoLib) — real mod assets, real bone-attachment convention ──
+// TACZ does not use a separate player-rig animator to position the arms: each gun's
+// own rig carries dedicated "righthand_pos"/"lefthand_pos" bones, driven by the gun's
+// own animation set (static_idle/shoot/reload_*), and the real arm mesh is parented
+// directly to those bones (with a fixed 180°-about-Z correction — TACZ's own bridge
+// between GeckoLib's bone-forward convention and the arm-mesh's convention). This
+// replaces the old WEAPON_OFFSET/steveRightArm/PlayerAnimator rig entirely.
+let gunAnimator: GeckoAnimator | null = null;
+let gunAnimState = "idle";
 
-const gltfLoader = new GLTFLoader();
-gltfLoader.load(
-  "/models/ak47.glb",
-  (gltf) => {
-    const model = gltf.scene;
-
-    // ── Scale & pivot ────────────────────────────────────────────────────────
-    // Native model: barrel along +X (x=2.172, y=0.630, z=0.138 units).
-    // Scale so the full gun length fits ~0.55 weapon-view units.
-    const box = new THREE.Box3().setFromObject(model);
-    const size = new THREE.Vector3();
-    box.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z); // = size.x (barrel)
-    const targetSize = 0.76;
-    model.scale.setScalar(targetSize / maxDim);
-
-    // Center, then shift pivot so the trigger/grip area sits at the group origin
-    // (trigger is ~35 % from barrel tip = ~65 % from stock end along +X).
-    box.setFromObject(model);
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    model.position.sub(center);
-    // Grip offset: shift +X a bit so grip (not centre) is at group origin.
-    // scaledfullLength ≈ 0.55; 15 % of that toward barrel
-    // Barrel is along +X in model space.
-    // rotation.y = +π/2 sends +X → -Z (forward into screen). ✓
-    // Pivot: push model toward stock so trigger area sits at group origin.
-    // Pivot: center of bounding box at group origin; barrel tip is at model +X end.
-    // Z offset: push gun slightly forward so more barrel is visible.
-    model.position.x += 0.04;
-    model.position.y -= 0.02;
-    model.position.z += 0.10;
-
-    // Back to v9-style rotation (user approved basic look) with only ry fixed:
-    // v9 had ry = PI/2 - 0.07 → barrel tilted slightly RIGHT of crosshair.
-    // Fix: ry = PI/2 + 0.05 → barrel tilts slightly LEFT toward crosshair.
-    // rz=0.30 gives the visual roll (receiver top visible) without breaking barrel aim.
-    model.rotation.order = 'YXZ';
-    model.rotation.set(
-      0.05,                // X: minimal pitch
-      Math.PI / 2 + 0.05, // Y: barrel into screen + tiny left tilt (fixes v9's right-of-crosshair)
-      0.30,               // Z: ~17° roll — same as v9 which user approved
-    );
-
-    weaponGroup.position.copy(WEAPON_OFFSET);
-    weaponGroup.add(model);
-
-    // Make weapon materials not affected by world lighting (render in weapon scene)
-    model.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        mats.forEach(m => {
-          (m as THREE.MeshStandardMaterial).envMapIntensity = 0;
-        });
-      }
+(async () => {
+  try {
+    const loadTex = (url: string) => new Promise<THREE.Texture>((res, rej) => {
+      new THREE.TextureLoader().load(url, (t) => {
+        t.magFilter = THREE.NearestFilter;
+        t.minFilter = THREE.NearestFilter;
+        res(t);
+      }, undefined, rej);
     });
 
-    console.log("[AK47] model loaded, size x/y/z:", size.x.toFixed(3), size.y.toFixed(3), size.z.toFixed(3), "scale:", (targetSize / maxDim).toFixed(4));
-    (window as any).__ak47model = model;
-  },
-  undefined,
-  (err) => console.error("[AK47] GLB load error:", err),
-);
+    const [geoData, gunAnimData, gunTex, rightArmGeo, leftArmGeo, steveTex] = await Promise.all([
+      fetch("/tacz/models/m4a1_geo.json").then(r => r.json()),
+      fetch("/tacz/animations/m4a1.animation.json").then(r => r.json()),
+      loadTex("/tacz/textures/m4a1.png"),
+      fetch("/pointblank/models/item/right_arm.geo.json").then(r => r.json()),
+      fetch("/pointblank/models/item/left_arm.geo.json").then(r => r.json()),
+      loadTex("/textures/steve.png"),
+    ]);
+
+    const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData, gunTex, 1 / 16);
+
+    // Hide the placeholder hand cubes baked into righthand_pos/lefthand_pos
+    // themselves (not the whole bone — the real Steve arm meshes are parented
+    // to these same bones below, and hiding the bone would hide them too).
+    for (const name of ["righthand_pos", "lefthand_pos"]) {
+      const grp = gunBones[name];
+      if (!grp) continue;
+      for (const child of [...grp.children]) {
+        if (child instanceof THREE.Mesh) grp.remove(child);
+      }
+    }
+
+    // Hide unequipped-attachment variants this base file bundles (extended
+    // magazines) and internal/loose ammunition visuals (bullets inside the
+    // magazine, chambered round, a spare loose cartridge) that should stay
+    // invisible inside their solid housings — this animator doesn't implement
+    // the `scale`-to-zero toggling TACZ's Java code uses to show/hide these, so
+    // left visible they'd sit permanently coincident with or poking out of the
+    // equipped parts. Also hide internal-mechanism parts (bolt/buffer/
+    // charging-handle group, selector dial ring assembly) — their rest-pose
+    // layout in this file is an exploded/reference arrangement (correct for a
+    // disassembly view, never reassembled by any animation we drive), not a
+    // sitting-inside-the-receiver pose.
+    //
+    // "grip2" is genuinely an OPTIONAL attachment, not a base-gun part: M4A1's
+    // own data file (m4a1_data.json) lists "grip" in allow_attachment_types
+    // alongside scope/laser/muzzle/extended_mag — all slots that are EMPTY by
+    // default until the player equips something. Snapping it onto grip_pos (an
+    // earlier attempt) was wrong for the same reason leaving scope/laser
+    // attachments visible would be wrong: nothing is equipped there, so nothing
+    // should render, full stop — hide it like the other unequipped variants.
+    for (const name of [
+      "mag_extended_1", "mag_extended_2", "mag_extended_3",
+      "sight_folded", "handguard_tactical",
+      "bullet", "bullet_in_mag", "bullet_in_barrel",
+      "m4a1_pull", "buffer", "rings3", "selector",
+      "fore_sight3", "sight2", "grip2",
+    ]) {
+      if (gunBones[name]) gunBones[name].visible = false;
+    }
+
+    // oem_stock_tactical is different: TACZ's own promotional/HUD renders of
+    // the M4A1 always show it equipped (unlike grip/scope/laser, a rifle isn't
+    // shown stockless by default) — its rest-pose position in this file is
+    // just a parked/storage spot, nowhere near the gun. Replicate what TACZ's
+    // Java attachment code does at equip time: measure the real gap to the
+    // gun's own stock_pos marker bone at runtime and close it, rather than
+    // hardcoding a position.
+    const snapToMarker = (pieceName: string, markerName: string) => {
+      const piece = gunBones[pieceName];
+      const marker = gunBones[markerName];
+      if (!piece || !marker || !piece.parent) return;
+      gunRoot.updateMatrixWorld(true);
+      const pieceWorld  = piece.getWorldPosition(new THREE.Vector3());
+      const markerWorld = marker.getWorldPosition(new THREE.Vector3());
+      const parent = piece.parent;
+      const pieceLocal  = parent.worldToLocal(pieceWorld.clone());
+      const markerLocal = parent.worldToLocal(markerWorld.clone());
+      piece.position.add(markerLocal.clone().sub(pieceLocal));
+    };
+    snapToMarker("oem_stock_tactical", "stock_pos");
+
+    // Store base positions for position animation (bolt, mag insertion, etc.)
+    for (const grp of Object.values(gunBones)) {
+      grp.userData.basePos = [grp.position.x, grp.position.y, grp.position.z];
+    }
+
+    gunAnimator = new GeckoAnimator(gunAnimData, gunBones, 1 / 16);
+    gunAnimator.play("static_idle");
+    gunAnimator.update(0);
+
+    // Position AND orient the gun so its own "idle_view" bone — TACZ's real
+    // first-person positioning reference (see the real Java source,
+    // FirstPersonRenderGunEvent.applyFirstPersonPositioningTransform /
+    // getPositioningNodeInverse) — lands exactly at this group's origin with
+    // identity orientation. getPositioningNodeInverse walks the bone chain from
+    // "idle_view" back to root and inverts BOTH the rotation and translation of
+    // every bone along the way, not just a position offset — our previous fix
+    // (negating "camera" bone's position only) canceled position correctly but
+    // left the model's internal axes misaligned with the camera's, which is why
+    // barrel and hand ended up on inconsistent sides of the camera plane.
+    gunContainer.add(gunRoot);
+    gunContainer.position.set(0, 0, 0);
+    gunContainer.quaternion.identity();
+    gunContainer.updateMatrixWorld(true);
+    const idleView = gunBones["idle_view"] ?? gunBones["camera"];
+    idleView.updateMatrixWorld(true);
+    const vgInverse = new THREE.Matrix4().copy(viewmodelGroup.matrixWorld).invert();
+    const idleViewLocalToVG = new THREE.Matrix4().multiplyMatrices(vgInverse, idleView.matrixWorld);
+    const gunBaseMatrix = idleViewLocalToVG.invert();
+    gunBaseMatrix.decompose(gunBasePosition, gunBaseQuaternion, new THREE.Vector3());
+    gunContainer.position.copy(gunBasePosition);
+    gunContainer.quaternion.copy(gunBaseQuaternion);
+
+    // Real arm models (item/right_arm.geo.json + item/left_arm.geo.json, Steve skin
+    // texture) at true S=1/32 scale (their 8×24×8px cubes → 0.25×0.75×0.25, matching
+    // vanilla ModelBiped's 4×12×4 exactly at 2x resolution).
+    //
+    // These arm assets are actually from the "Point Blank" mod (pointblank/geo/item/
+    // right_arm.geo.json — see public/pointblank/), not TACZ, and Point Blank's own
+    // GunItemRenderer.applyArmRefTransforms (real source, github.com/Miss-Moss/
+    // pointblank-jelly) attaches this exact mesh with a pure TRANSLATION aligning a
+    // fixed reference point on the arm to a reference point on the gun — no rotation
+    // at all. TACZ's Rz(180°) is specific to vanilla Minecraft's PlayerModel arm
+    // (a different mesh with a different base orientation) and doesn't apply here;
+    // applying it was pointing this mesh the wrong way. The arm bone's own pivot
+    // ([-13.3, 25.3, -0.2], the shoulder joint — cube spans down from there to the
+    // hand) is the natural reference point, so align it to the marker bone's origin
+    // directly (position = 0,0,0), matching Point Blank's "translate to align a
+    // reference point, no rotation" approach.
+    //
+    // TACZ's own static_idle animation ALSO applies scale [1, 1.5, 1] to the
+    // righthand/lefthand bones (parents of righthand_pos/lefthand_pos) — meant
+    // for the gun's own internal placeholder arm geometry, which presumably
+    // expects it. Our replacement Steve arm mesh doesn't, so it needs a
+    // compensating inverse scale to avoid stretching.
+    const attachHand = (armGroup: THREE.Group, handPosBone: THREE.Object3D) => {
+      handPosBone.updateMatrixWorld(true);
+      const parentWorldScale = new THREE.Vector3();
+      handPosBone.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), parentWorldScale);
+
+      armGroup.rotation.set(0, 0, 0);
+      armGroup.scale.set(1 / parentWorldScale.x, 1 / parentWorldScale.y, 1 / parentWorldScale.z);
+      armGroup.position.set(0, 0, 0);
+
+      handPosBone.add(armGroup);
+    };
+
+    const ARM_S = 1 / 32;
+    const rightArmModel = buildGeoModel(rightArmGeo, steveTex, ARM_S);
+    attachHand(rightArmModel.boneGroups["rightarm"], gunBones["righthand_pos"]);
+
+    const leftArmModel = buildGeoModel(leftArmGeo, steveTex, ARM_S);
+    attachHand(leftArmModel.boneGroups["leftarm"], gunBones["lefthand_pos"]);
+
+    gunAnimState = "idle";
+
+    console.log("[M4A1] GeckoLib model loaded. Bones:", Object.keys(gunBones).length);
+    (window as any).__gunBones = gunBones;
+  } catch (err) {
+    console.error("[AK47] GeckoLib load error:", err);
+  }
+})();
+
+// ── SWAT Steve character ──────────────────────────────────────────────────────
+// Placed at a fixed spot in the Dust_2 world, standing and animating.
+const steveCharacter = new SteveCharacter();
+// Spawn yaw=-1.685 → lookDir≈(+0.994,0,+0.113). Place Steve 3 units in front.
+steveCharacter.root.position.set(-7, 5.0, 46);
+scene.add(steveCharacter.root);
+steveCharacter.equipSwatArmor();
 
 // ── Block outline ────────────────────────────────────────────────────────────
 const outlineGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.002, 1.002, 1.002));
@@ -371,20 +512,45 @@ function tick(now: number) {
   controller.update(dt);
   world.update(controller.physics.position);
 
-  // Sync weapon camera to main camera orientation (but independent position)
+  // Sync weapon camera orientation to main camera so viewmodel follows aim direction
   weaponCamera.rotation.copy(controller.camera.rotation);
   weaponCamera.updateMatrixWorld(true);
 
-  // Apply visual model kick + reload animation
+  // Animation state machine — drive the gun's own GeckoLib animation from AK47 state.
+  // The arm meshes are children of the gun's righthand_pos/lefthand_pos bones, so
+  // this alone also drives their movement — no separate player-rig animator needed.
   const ak = controller.ak47;
-  weaponGroup.position.copy(WEAPON_OFFSET);
-  weaponGroup.position.y -= ak.modelKickPitch * 0.3;  // kick down (screen kicks up)
-  weaponGroup.position.z += ak.modelKickPitch * 0.1;  // push back slightly
-  weaponGroup.rotation.x  = ak.modelKickPitch * 0.4;  // tilt barrel up
-  // Reload: drop + tilt + push back
-  weaponGroup.position.y += ak.reloadOffsetY;
-  weaponGroup.position.z += ak.reloadOffsetZ;
-  weaponGroup.rotation.z  = ak.reloadRollZ;
+  if (gunAnimator) {
+    // gun animation priority: reload > fire > idle (TACZ's own animation names)
+    if (ak.reloading && gunAnimState !== "reload") {
+      gunAnimator.play("reload_tactical");
+      gunAnimState = "reload";
+    } else if (ak.isFiring && !ak.reloading && gunAnimState !== "fire") {
+      gunAnimator.play("shoot");
+      gunAnimState = "fire";
+    } else if (!ak.reloading && !ak.isFiring && gunAnimState !== "idle") {
+      gunAnimator.play("static_idle");
+      gunAnimState = "idle";
+    }
+    gunAnimator.update(dt);
+  }
+  // Face Steve toward the player
+  const steveDx = controller.physics.position.x - steveCharacter.root.position.x;
+  const steveDz = controller.physics.position.z - steveCharacter.root.position.z;
+  const steveYaw = Math.atan2(-steveDx, -steveDz);
+  steveCharacter.update(dt, true, steveYaw);
+
+  // Apply kick/sway to gunContainer (steveRoot alias) on top of its idle_view-aligned
+  // base position/orientation. Kick/roll are small screen-space sway effects, applied
+  // as an extra rotation in the parent (camera) frame on top of the base orientation —
+  // i.e. composed as kick * base, not overwriting the base orientation outright.
+  steveRoot.position.set(
+    gunBasePosition.x,
+    gunBasePosition.y - ak.modelKickPitch * 0.3 + ak.reloadOffsetY,
+    gunBasePosition.z  + ak.modelKickPitch * 0.1 + ak.reloadOffsetZ,
+  );
+  kickQuaternion.setFromEuler(kickEuler.set(ak.modelKickPitch * 0.4, 0, ak.reloadRollZ));
+  steveRoot.quaternion.multiplyQuaternions(kickQuaternion, gunBaseQuaternion);
 
   // Block outline
   if (controller.targetBlock) {
@@ -438,11 +604,16 @@ function tick(now: number) {
   const calls = renderer.info.render.calls;
   hud.setDebugText(
     `FPS ${fps}` +
-    `\npos  ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}` +
-    `\npitch ${pitch.toFixed(4)}  yaw ${yaw.toFixed(4)}` +
-    `\nspawn.json → {"x":${p.x.toFixed(3)},"y":${p.y.toFixed(3)},"z":${p.z.toFixed(3)},"pitch":${pitch.toFixed(4)},"yaw":${yaw.toFixed(4)}}` +
-    `\ngrounded ${controller.physics.grounded}  block_at[${by}]=${blockAt}` +
-    `\ntriangles ${tris.toLocaleString()}  draw calls ${calls}`,
+    `
+pos  ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}` +
+    `
+pitch ${pitch.toFixed(4)}  yaw ${yaw.toFixed(4)}` +
+    `
+spawn.json → {"x":${p.x.toFixed(3)},"y":${p.y.toFixed(3)},"z":${p.z.toFixed(3)},"pitch":${pitch.toFixed(4)},"yaw":${yaw.toFixed(4)}}` +
+    `
+grounded ${controller.physics.grounded}  block_at[${by}]=${blockAt}` +
+    `
+triangles ${tris.toLocaleString()}  draw calls ${calls}`,
   );
   hud.setAmmo(ak.ammo, ak.reserve, ak.reloading);
 
@@ -464,4 +635,4 @@ function tick(now: number) {
 requestAnimationFrame(tick);
 
 (window as any).__game = { controller, renderer, scene };
-(window as any).__weaponGroup = weaponGroup;
+(window as any).__steveRoot = steveRoot;

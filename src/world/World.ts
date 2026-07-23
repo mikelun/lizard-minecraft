@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // NEW orchestrator, modeled on escape-tsuami-client/src/game/map/World.ts's
 // responsibilities (chunk streaming by player position, slot allocation for
 // the uChunkPositions lookup texture, get/set/place block) but decoupled from
@@ -95,7 +96,11 @@ export class World {
 
   private startChunkX = 0;
   private startChunkZ = 0;
+  private chunkPosInitialized = false;
   private loadQueue: { cx: number; cz: number; dist: number }[] = [];
+  // Parallel coord store so the unload loop never calls .split(",").map(Number)
+  // on every loaded column key every frame.
+  private readonly loadedColumnCoords = new Map<string, { cx: number; cz: number }>();
 
   /** Optional model layer; set from outside before the game loop starts. */
   modelLayer: ModelLayer | null = null;
@@ -216,7 +221,7 @@ export class World {
       // Read raw bytes first — nginx may serve the .gz file with
       // Content-Encoding: gzip, causing the browser to auto-decompress before
       // we see the body.  In that case `raw` already contains MCBIN002 bytes.
-      // Detect by checking the gzip magic (\x1f\x8b); if present, decompress
+      // Detect by checking the gzip magic (�); if present, decompress
       // ourselves; if absent, the browser already did it.
       const raw  = await resp.arrayBuffer();
       const hdr  = new Uint8Array(raw, 0, 2);
@@ -532,6 +537,7 @@ export class World {
     const key = columnKey(cx, cz);
     if (this.loadedColumns.has(key)) return;
     this.loadedColumns.add(key);
+    this.loadedColumnCoords.set(key, { cx, cz });
 
     // Find which neighbourhood columns (chunk blocks + voidMap padding) aren't
     // cached yet.  We send only those to the terrain worker; already-cached ones
@@ -658,6 +664,7 @@ export class World {
     const key = columnKey(cx, cz);
     if (!this.loadedColumns.has(key)) return;
     this.loadedColumns.delete(key);
+    this.loadedColumnCoords.delete(key);
 
     for (let cy = 0; cy < MAX_HEIGHT_IN_CHUNKS; cy++) {
       const ck = chunkKey(cx, cy, cz);
@@ -682,13 +689,13 @@ export class World {
     const pcx = Math.floor(playerPos.x / S);
     const pcz = Math.floor(playerPos.z / S);
 
-    if (pcx !== this.startChunkX || pcz !== this.startChunkZ || this.loadQueue.length === 0) {
+    if (!this.chunkPosInitialized || pcx !== this.startChunkX || pcz !== this.startChunkZ) {
+      this.chunkPosInitialized = true;
       this.startChunkX = pcx;
       this.startChunkZ = pcz;
       this.rebuildLoadQueue(pcx, pcz);
 
-      for (const key of this.loadedColumns) {
-        const [cx, cz] = key.split(",").map(Number);
+      for (const { cx, cz } of this.loadedColumnCoords.values()) {
         if (Math.abs(cx - pcx) > CACHED_RENDER_DISTANCE || Math.abs(cz - pcz) > CACHED_RENDER_DISTANCE) {
           this.unloadColumn(cx, cz);
         }
@@ -734,7 +741,9 @@ export class World {
     for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
       for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
         const cx = pcx + dx, cz = pcz + dz;
-        if (this.loadedColumns.has(columnKey(cx, cz))) continue;
+        // Use loadedColumnCoords (Map) — .has() on a Map is the same O(1) cost
+        // as Set, but avoids allocating a template-literal string just to check.
+        if (this.loadedColumnCoords.has(columnKey(cx, cz))) continue;
         list.push({ cx, cz, dist: dx * dx + dz * dz });
       }
     }

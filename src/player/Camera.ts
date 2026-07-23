@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Fresh, minimal port of the pointer-lock yaw/pitch behavior in
 // escape-tsuami-client/src/game/player/camera.ts -- the source file is mostly
 // third-person/editor camera modes and websocket-synced orientation broadcast,

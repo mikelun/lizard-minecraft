@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 export const vsChunk = `
 layout (location = 0) in uint packed_data;
 layout (location = 1) in uint packed_greedy;

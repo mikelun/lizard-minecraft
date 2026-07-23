@@ -1,3 +1,4 @@
+// © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 /**
  * JsonModelLoader — builds Three.js meshes from pre-resolved Minecraft block
  * model JSON files (output of scripts/extract_mc_models.py).
