@@ -884,7 +884,7 @@ function tick(now: number) {
   remotePlayers.update(dt);
   _netTimer -= dt;
   if (_netTimer <= 0) {
-    _netTimer = 0.05; // 20 Hz
+    _netTimer = 0.016; // ~62 Hz
     const pp = controller.physics.position;
     net.sendPosition(pp.x, pp.y, pp.z, controller.fpCamera.yaw);
   }

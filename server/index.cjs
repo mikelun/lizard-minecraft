@@ -6,7 +6,7 @@ const uWS = require('uWebSockets.js');
 
 const PORT        = parseInt(process.env.PORT || '9001', 10);
 const MAX_PLAYERS = 10;
-const TICK_MS     = 50; // 20 Hz
+const TICK_MS     = 16; // ~62 Hz (CS:GO-like)
 
 // Weapon tiers: each entry is the weapon slot index in the client (Controller.ts weapons[])
 //   0=M16A1  1=Deagle  2=MP7  3=P90  4=Ballista  5=LAMG

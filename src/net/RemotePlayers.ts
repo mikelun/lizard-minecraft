@@ -19,9 +19,9 @@ const TIER_GUNS = [
 const HITBOX_HALF = new THREE.Vector3(0.3, 0.9, 0.3);
 
 // CS:GO cl_interp equivalent — render remote players this many seconds behind
-// the most recently received snapshot. At 20 Hz ticks (50 ms), 100 ms gives us
-// exactly 2 ticks of buffer, enough to always have two frames to interpolate between.
-const INTERP_DELAY = 0.1;
+// the most recently received snapshot. At ~62 Hz ticks (16 ms), 50 ms gives us
+// ~3 ticks of buffer, enough to smooth over any single-packet jitter.
+const INTERP_DELAY = 0.05;
 
 interface Snapshot {
   x: number; y: number; z: number; yaw: number; t: number;
@@ -80,7 +80,7 @@ export class RemotePlayers {
     e.snaps = [{ x, y, z, yaw: e.data.yaw, t }];
   }
 
-  /** Apply 20 Hz position + tier updates from binary tick. */
+  /** Apply ~62 Hz position + tier updates from binary tick. */
   applyTick(players: RemotePlayerData[]) {
     const t = performance.now() / 1000;
     for (const p of players) {
@@ -92,9 +92,9 @@ export class RemotePlayers {
       e.data.z   = p.z;
       e.data.yaw = p.yaw;
 
-      // Push snapshot and keep a rolling 30-frame (~1.5 s) window.
+      // Push snapshot and keep a rolling 128-frame (~2 s) window.
       e.snaps.push({ x: p.x, y: p.y, z: p.z, yaw: p.yaw, t });
-      if (e.snaps.length > 30) e.snaps.shift();
+      if (e.snaps.length > 128) e.snaps.shift();
 
       if (p.tier !== e.data.tier) {
         e.data.tier = p.tier;
@@ -140,7 +140,7 @@ export class RemotePlayers {
         const last = snaps[snaps.length - 1];
         const prev = snaps[snaps.length - 2];
         const moved = Math.hypot(last.x - prev.x, last.z - prev.z);
-        walking = moved > 0.02; // ~0.4 m/s threshold at 20 Hz
+        walking = moved > 0.006; // ~0.4 m/s threshold at 62 Hz
       }
 
       e.steve.root.position.set(x, y, z);
