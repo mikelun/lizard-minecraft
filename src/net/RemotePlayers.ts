@@ -37,6 +37,11 @@ export class RemotePlayers {
     steve.aiming = true;
     steve.root.position.set(p.x, p.y, p.z);
     this.scene.add(steve.root);
+    if (p.id % 2 === 0) {
+      steve.equipSwatArmor();
+    } else {
+      steve.equipArmor('/marbled/military_armor.geo.json', '/marbled/desert_military_armor.png');
+    }
     const def = TIER_GUNS[Math.min(p.tier, TIER_GUNS.length - 1)];
     steve.equipGun(def.geo, def.tex, def.scale);
     this.map.set(p.id, { steve, data: { ...p }, box: new THREE.Box3() });
