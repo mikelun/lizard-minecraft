@@ -13,7 +13,11 @@ const TICK_MS     = 16; // ~62 Hz (CS:GO-like)
 const GUN_TIERS  = [1, 2, 3, 0, 5, 4]; // Deagle → MP7 → P90 → M16A1 → LAMG → Ballista
 const TIER_COUNT = GUN_TIERS.length;
 
-const WEAPON_NAMES = ['M16A1', 'Deagle', 'MP7', 'P90', 'Ballista', 'LAMG'];
+const WEAPON_NAMES   = ['M16A1', 'Deagle', 'MP7', 'P90', 'Ballista', 'LAMG'];
+// Damage per bullet, indexed by weapon slot (same order as WEAPON_NAMES)
+const WEAPON_DAMAGE  = [35, 50, 25, 20, 100, 15];
+//                      M16 Dgl  MP7  P90  Bal  LMG
+// M16=3 shots, Deagle=2 shots, MP7=4, P90=5, Ballista=1-shot, LAMG=7
 
 const SPAWNS = [
   [-12, 5, 46], [-10, 5, 44], [-8,  5, 42],
@@ -116,14 +120,13 @@ class Room {
     const vic = this.players.get(victimId);
     if (!atk || !vic || vic.dead || atk.dead) return;
 
-    // Validate: attacker must be in the same room (always true) and not be dead
-    vic.hp -= 100;
+    const weaponSlot = GUN_TIERS[atk.tier];
+    vic.hp -= WEAPON_DAMAGE[weaponSlot] ?? 25;
     if (vic.hp > 0) return;
 
     vic.hp   = 0;
     vic.dead = true;
 
-    const weaponSlot = GUN_TIERS[atk.tier];
     atk.tier++;
 
     if (atk.tier >= TIER_COUNT) {
