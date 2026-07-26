@@ -153,18 +153,29 @@ export class RemotePlayers {
     }
   }
 
-  /** Returns the ID of the first remote player whose hitbox the ray intersects, or -1. */
-  raycast(origin: THREE.Vector3, direction: THREE.Vector3): number {
+  /**
+   * Returns { id, zone } for the closest remote player hit.
+   * zone: 0 = legs, 1 = body, 2 = head. Returns id=-1 on miss.
+   */
+  raycast(origin: THREE.Vector3, direction: THREE.Vector3): { id: number; zone: number } {
     const ray = new THREE.Ray(origin, direction.clone().normalize());
-    let best = Infinity, bestId = -1;
+    const hitPt = new THREE.Vector3();
+    let best = Infinity, bestId = -1, bestZone = 1;
+
     for (const [id, e] of this.map) {
-      const t = ray.intersectBox(e.box, new THREE.Vector3());
-      if (t !== null) {
-        const dist = origin.distanceTo(t);
-        if (dist < best) { best = dist; bestId = id; }
+      const result = ray.intersectBox(e.box, hitPt);
+      if (result !== null) {
+        const dist = origin.distanceTo(hitPt);
+        if (dist < best) {
+          best = dist;
+          bestId = id;
+          // Relative height within the box (0 = feet, 1 = top of head)
+          const relY = (hitPt.y - e.box.min.y) / (e.box.max.y - e.box.min.y);
+          bestZone = relY > 0.75 ? 2 : relY > 0.35 ? 1 : 0; // head / body / legs
+        }
       }
     }
-    return bestId;
+    return { id: bestId, zone: bestZone };
   }
 
   /** Hide a player's Steve immediately (called when they die). */

@@ -31,7 +31,7 @@ export class GameClient {
   private ws:         WebSocket | null = null;
   private _posBuf  = new ArrayBuffer(17);
   private _posView: DataView;
-  private _hitBuf  = new ArrayBuffer(2);
+  private _hitBuf  = new ArrayBuffer(3); // [0x02, targetId, zone]
   private _hitView: DataView;
 
   localId   = -1;
@@ -109,9 +109,10 @@ export class GameClient {
     this.ws.send(this._posBuf);
   }
 
-  sendHit(targetId: number) {
+  sendHit(targetId: number, zone: number) {
     if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this._hitView.setUint8(1, targetId);
+    this._hitView.setUint8(2, zone);
     this.ws.send(this._hitBuf);
   }
 }

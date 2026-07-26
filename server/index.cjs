@@ -14,10 +14,13 @@ const GUN_TIERS  = [1, 2, 3, 0, 5, 4]; // Deagle → MP7 → P90 → M16A1 → L
 const TIER_COUNT = GUN_TIERS.length;
 
 const WEAPON_NAMES   = ['M16A1', 'Deagle', 'MP7', 'P90', 'Ballista', 'LAMG'];
-// Damage per bullet, indexed by weapon slot (same order as WEAPON_NAMES)
+// Base damage per bullet, indexed by weapon slot (same order as WEAPON_NAMES)
 const WEAPON_DAMAGE  = [35, 50, 25, 20, 100, 15];
 //                      M16 Dgl  MP7  P90  Bal  LMG
 // M16=3 shots, Deagle=2 shots, MP7=4, P90=5, Ballista=1-shot, LAMG=7
+
+// Damage multipliers by hit zone (0=legs, 1=body, 2=head)
+const ZONE_MULT = [0.75, 1.0, 4.0];
 
 const SPAWNS = [
   [-12, 5, 46], [-10, 5, 44], [-8,  5, 42],
@@ -115,13 +118,14 @@ class Room {
     if (p) { p.x = x; p.y = y; p.z = z; p.yaw = yaw; }
   }
 
-  handleHit(attackerId, victimId) {
+  handleHit(attackerId, victimId, zone = 1) {
     const atk = this.players.get(attackerId);
     const vic = this.players.get(victimId);
     if (!atk || !vic || vic.dead || atk.dead) return;
 
     const weaponSlot = GUN_TIERS[atk.tier];
-    vic.hp -= WEAPON_DAMAGE[weaponSlot] ?? 25;
+    const mult = ZONE_MULT[zone] ?? 1.0;
+    vic.hp -= Math.round((WEAPON_DAMAGE[weaponSlot] ?? 25) * mult);
     if (vic.hp > 0) return;
 
     vic.hp   = 0;
@@ -217,9 +221,10 @@ uWS.App()
         );
       }
 
-      // 0x02 — hit report [targetId:u8]  (2 bytes)
-      else if (type === 0x02 && buf.length >= 2) {
-        room.handleHit(player.id, buf[1]);
+      // 0x02 — hit report [targetId:u8, zone:u8]  (3 bytes)
+      // zone: 0=legs, 1=body, 2=head
+      else if (type === 0x02 && buf.length >= 3) {
+        room.handleHit(player.id, buf[1], buf[2]);
       }
     },
 

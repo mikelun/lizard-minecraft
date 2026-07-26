@@ -303,8 +303,8 @@ controller.onShot = (origin, dirIn) => {
 
   // Gun Game: report hit to server if we hit a remote player
   if (net.connected) {
-    const hitId = remotePlayers.raycast(origin, dir);
-    if (hitId !== -1) net.sendHit(hitId);
+    const { id: hitId, zone } = remotePlayers.raycast(origin, dir);
+    if (hitId !== -1) net.sendHit(hitId, zone);
   }
 };
 
