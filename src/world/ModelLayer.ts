@@ -1,7 +1,12 @@
 // © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
-// ModelLayer — renders custom 3D models for blocks that the cube mesher skips.
-// Uses JsonModelLoader which ports the vberlier/json-model-viewer approach to
-// modern Three.js BufferGeometry.
+// ModelLayer — renders custom 3D models for all non-cube blocks using the
+// canonical Minecraft 1.21.5 block models extracted from the jar.
+//
+// Handles: chest · stairs (8 materials × 8 variants) ·
+//          slabs (7 materials × 2 halves) · trapdoors (oak/iron × 16 states)
+//
+// Block orientation follows the Minecraft blockstates JSON convention:
+//   Y rotation first, then X rotation (Three.js rotation.order = "YXZ").
 
 import * as THREE from "three";
 import { BType } from "./types";
@@ -9,36 +14,131 @@ import { CHUNK_SIZE, WORLD_HEIGHT } from "../config";
 import { loadModelGroup } from "./JsonModelLoader";
 
 const S = CHUNK_SIZE;
+const D = THREE.MathUtils.degToRad;
 
-/** Block types handled here instead of the cube mesher. */
-export const CUSTOM_MODEL_BTYPES = new Set<number>([BType.chest]);
+// ── Stair base model names per base BType ─────────────────────────────────────
 
-// ── model registry ────────────────────────────────────────────────────────────
-
-// Map from BType → model name (filename stem under /mc/models/)
-const MODEL_NAMES: Partial<Record<number, string>> = {
-  [BType.chest]: "chest",
+const STAIR_BASES: Partial<Record<number, string>> = {
+  [BType.stone_brick_stairs]:          "stone_brick_stairs",
+  [BType.smooth_sandstone_stairs]:     "smooth_sandstone_stairs",
+  [BType.sandstone_stairs]:            "sandstone_stairs",
+  [BType.smooth_red_sandstone_stairs]: "smooth_red_sandstone_stairs",
+  [BType.oak_stairs]:                  "oak_stairs",
+  [BType.prismarine_brick_stairs]:     "prismarine_brick_stairs",
+  [BType.cobblestone_stairs]:          "cobblestone_stairs",
+  [BType.brick_stairs]:                "brick_stairs",
 };
 
-// Pre-loaded prototype groups, cloned for each placed instance.
-const prototypes = new Map<number, THREE.Group | null>();
+// variant_offset = id − base_id = facing*2 + half
+// facing: 0=north→y=270, 1=south→y=90, 2=east→y=0, 3=west→y=180
+// half:   0=bottom→x=0,  1=top→x=180
+// From Minecraft blockstates/stone_brick_stairs.json
+const STAIR_ROTS: [rotX: number, rotY: number][] = [
+  [0,   270], // offset 0: north, bottom
+  [180, 270], // offset 1: north, top
+  [0,   90],  // offset 2: south, bottom
+  [180, 90],  // offset 3: south, top
+  [0,   0],   // offset 4: east,  bottom
+  [180, 0],   // offset 5: east,  top
+  [0,   180], // offset 6: west,  bottom
+  [180, 180], // offset 7: west,  top
+];
 
-async function loadPrototype(btype: number): Promise<THREE.Group | null> {
-  if (prototypes.has(btype)) return prototypes.get(btype)!;
-  const name = MODEL_NAMES[btype];
-  if (!name) { prototypes.set(btype, null); return null; }
-  console.log(`[ModelLayer] loading prototype for btype=${btype} name=${name}`);
-  const group = await loadModelGroup(name);
-  if (group) {
-    console.log(`[ModelLayer] prototype loaded ok, children=${group.children.length}`);
-  } else {
-    console.error(`[ModelLayer] prototype FAILED to load for btype=${btype}`);
+// ── Slab model names per BType ────────────────────────────────────────────────
+
+const SLAB_MODELS: Partial<Record<number, string>> = {
+  [BType.cut_sandstone_slab]:             "cut_sandstone_slab",
+  [BType.smooth_sandstone_slab]:          "smooth_sandstone_slab",
+  [BType.smooth_stone_slab]:              "smooth_stone_slab",
+  [BType.smooth_red_sandstone_slab]:      "smooth_red_sandstone_slab",
+  [BType.oak_slab]:                       "oak_slab",
+  [BType.stone_brick_slab]:              "stone_brick_slab",
+  [BType.prismarine_brick_slab]:          "prismarine_brick_slab",
+  [BType.cut_sandstone_slab_top]:         "cut_sandstone_slab_top",
+  [BType.smooth_sandstone_slab_top]:      "smooth_sandstone_slab_top",
+  [BType.smooth_stone_slab_top]:          "smooth_stone_slab_top",
+  [BType.smooth_red_sandstone_slab_top]:  "smooth_red_sandstone_slab_top",
+  [BType.oak_slab_top]:                   "oak_slab_top",
+  [BType.stone_brick_slab_top]:          "stone_brick_slab_top",
+  [BType.prismarine_brick_slab_top]:      "prismarine_brick_slab_top",
+};
+
+// ── Trapdoor state decoder ────────────────────────────────────────────────────
+// BType = trapdoor_base + type*16 + open*8 + facing*2 + half
+// type:   0=oak, 1=iron, 2=mangrove, 3=spruce
+// open:   0=closed (flat), 1=open (vertical)
+// facing: 0=north, 1=south, 2=east, 3=west
+// half:   0=bottom, 1=top
+
+const TRAPDOOR_TYPE_NAMES = ["oak", "iron", "mangrove", "spruce"];
+const TRAPDOOR_OPEN_ROTY  = [0, 180, 90, 270]; // N, S, E, W
+
+function trapdoorVariant(id: number): { modelName: string; rotY: number } {
+  const state  = id - BType.trapdoor_base;
+  const type   = (state >> 4) & 3;
+  const sub    = state & 0xF;
+  const open   = (sub >> 3) & 1;
+  const facing = (sub >> 1) & 3;
+  const half   = sub & 1;
+  const mat    = TRAPDOOR_TYPE_NAMES[type] ?? "oak";
+
+  if (!open) {
+    return { modelName: `${mat}_trapdoor_${half ? "top" : "bottom"}`, rotY: 0 };
   }
-  prototypes.set(btype, group);
-  return group;
+  return { modelName: `${mat}_trapdoor_open`, rotY: TRAPDOOR_OPEN_ROTY[facing] ?? 0 };
 }
 
-// ── key helpers ───────────────────────────────────────────────────────────────
+// ── Variant resolution ────────────────────────────────────────────────────────
+
+interface Variant { modelName: string; rotX: number; rotY: number }
+
+function getVariant(id: number): Variant | null {
+  // Chest
+  if (id === BType.chest) return { modelName: "chest", rotX: 0, rotY: 0 };
+
+  // Slabs
+  const slabName = SLAB_MODELS[id];
+  if (slabName !== undefined) return { modelName: slabName, rotX: 0, rotY: 0 };
+
+  // Stairs
+  for (const [baseStr, modelBase] of Object.entries(STAIR_BASES)) {
+    const base   = Number(baseStr);
+    const offset = id - base;
+    if (offset >= 0 && offset < 8) {
+      const [rotX, rotY] = STAIR_ROTS[offset];
+      return { modelName: modelBase as string, rotX, rotY };
+    }
+  }
+
+  return null;
+}
+
+// ── Set of all BType IDs handled by this layer ────────────────────────────────
+// Stairs, slabs, and trapdoors use merged geometry layers for performance.
+// This layer only handles sparse blocks where individual Group.clone() is fine.
+
+export const CUSTOM_MODEL_BTYPES = new Set<number>([BType.chest]);
+
+// ── Prototype cache ───────────────────────────────────────────────────────────
+// "loading" sentinel avoids duplicate fetch requests
+
+const LOADING_SENTINEL = Symbol("loading");
+type ProtoEntry = THREE.Group | null | typeof LOADING_SENTINEL;
+
+const prototypes = new Map<string, ProtoEntry>();
+
+async function ensurePrototype(modelName: string): Promise<THREE.Group | null> {
+  const cur = prototypes.get(modelName);
+  if (cur === LOADING_SENTINEL) return null; // in-flight
+  if (cur !== undefined) return cur as THREE.Group | null;
+
+  prototypes.set(modelName, LOADING_SENTINEL);
+  const g = await loadModelGroup(modelName);
+  prototypes.set(modelName, g);
+  return g;
+}
+
+// ── Key helpers ───────────────────────────────────────────────────────────────
 
 function colKey(cx: number, cz: number)          { return `${cx},${cz}`; }
 function blkKey(x: number, y: number, z: number) { return `${x},${y},${z}`; }
@@ -49,32 +149,25 @@ export class ModelLayer {
   /** Add this group to the Three.js scene. */
   readonly group = new THREE.Group();
 
-  // block-key → placed group
-  private readonly instances = new Map<string, THREE.Group>();
-  // columns already scanned
-  private readonly scannedCols = new Set<string>();
+  private readonly instances    = new Map<string, THREE.Group>();
+  private readonly scannedCols  = new Set<string>();
 
-  // Pending placements requested before the prototype finished loading.
-  private readonly pending = new Map<number, Array<{ wx: number; wy: number; wz: number }>>();
+  // Pending placements keyed by model name — drained when prototype finishes loading.
+  private readonly pending = new Map<string, Array<{ btype: number; wx: number; wy: number; wz: number }>>();
 
   constructor() {
-    // Eagerly load all prototypes so they're ready when columns stream in.
-    for (const btype of CUSTOM_MODEL_BTYPES) {
-      loadPrototype(btype).then(() => {
-        // Place any positions that were queued while loading.
-        // Process even if proto is null — placeBlock shows the debug box either way.
-        const queue = this.pending.get(btype) ?? [];
-        this.pending.delete(btype);
-        for (const { wx, wy, wz } of queue) {
-          this.placeBlock(btype, wx, wy, wz);
-        }
-      });
-    }
+    // Eagerly start loading all needed prototypes.
+    ensurePrototype("chest").then(g => {
+      if (!g) return;
+      const queue = this.pending.get("chest");
+      if (!queue) return;
+      this.pending.delete("chest");
+      for (const { btype, wx, wy, wz } of queue) this._place(btype, wx, wy, wz);
+    });
   }
 
-  // ── public API ──────────────────────────────────────────────────────────────
+  // ── Public API ──────────────────────────────────────────────────────────────
 
-  /** Call after terrain data for chunk column (cx, cz) is ready. */
   onColumnLoaded(
     cx: number, cz: number,
     getBlock: (x: number, y: number, z: number) => BType,
@@ -89,15 +182,12 @@ export class ModelLayer {
         const wx = ox + lx, wz = oz + lz;
         for (let y = 0; y < WORLD_HEIGHT; y++) {
           const id = getBlock(wx, y, wz);
-          if (CUSTOM_MODEL_BTYPES.has(id)) {
-            this.placeBlock(id, wx, y, wz);
-          }
+          if (CUSTOM_MODEL_BTYPES.has(id)) this._place(id, wx, y, wz);
         }
       }
     }
   }
 
-  /** Call when a column goes out of range. */
   onColumnUnloaded(cx: number, cz: number) {
     const ck = colKey(cx, cz);
     if (!this.scannedCols.has(ck)) return;
@@ -107,49 +197,47 @@ export class ModelLayer {
     for (let lx = 0; lx < S; lx++) {
       for (let lz = 0; lz < S; lz++) {
         const wx = ox + lx, wz = oz + lz;
-        for (let y = 0; y < WORLD_HEIGHT; y++) {
-          this.removeAt(wx, y, wz);
-        }
+        for (let y = 0; y < WORLD_HEIGHT; y++) this._remove(wx, y, wz);
       }
     }
   }
 
-  /** Call when a block is placed or broken by the player. */
   onBlockChanged(wx: number, wy: number, wz: number, newId: BType) {
-    this.removeAt(wx, wy, wz);
-    if (CUSTOM_MODEL_BTYPES.has(newId)) {
-      this.placeBlock(newId, wx, wy, wz);
-    }
+    this._remove(wx, wy, wz);
+    if (CUSTOM_MODEL_BTYPES.has(newId)) this._place(newId, wx, wy, wz);
   }
 
-  // ── private ─────────────────────────────────────────────────────────────────
+  // ── Private ─────────────────────────────────────────────────────────────────
 
-  private placeBlock(btype: number, wx: number, wy: number, wz: number) {
+  private _place(btype: number, wx: number, wy: number, wz: number) {
     const key = blkKey(wx, wy, wz);
     if (this.instances.has(key)) return;
 
-    const proto = prototypes.get(btype);
+    const variant = getVariant(btype);
+    if (!variant) return;
 
-    if (proto === undefined) {
-      // Prototype still loading — queue it
-      if (!this.pending.has(btype)) this.pending.set(btype, []);
-      this.pending.get(btype)!.push({ wx, wy, wz });
-      console.log(`[ModelLayer] queued btype=${btype} at (${wx},${wy},${wz}), proto not ready yet`);
+    const { modelName, rotX, rotY } = variant;
+    const proto = prototypes.get(modelName);
+
+    if (proto === LOADING_SENTINEL || proto === undefined) {
+      // Prototype still loading — queue for deferred placement
+      if (!this.pending.has(modelName)) this.pending.set(modelName, []);
+      this.pending.get(modelName)!.push({ btype, wx, wy, wz });
       return;
     }
-
-    if (proto === null) {
-      console.warn(`[ModelLayer] no model for btype=${btype}`);
-      return;
-    }
+    if (proto === null) return; // load failed — skip silently
 
     const inst = proto.clone(true);
+    // Minecraft blockstates apply Y rotation first, then X (YXZ Euler order)
+    inst.rotation.order = "YXZ";
+    inst.rotation.y = D(rotY);
+    inst.rotation.x = D(rotX);
     inst.position.set(wx + 0.5, wy + 0.5, wz + 0.5);
     this.group.add(inst);
     this.instances.set(key, inst);
   }
 
-  private removeAt(wx: number, wy: number, wz: number) {
+  private _remove(wx: number, wy: number, wz: number) {
     const key = blkKey(wx, wy, wz);
     const inst = this.instances.get(key);
     if (!inst) return;

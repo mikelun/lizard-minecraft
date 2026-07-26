@@ -25,6 +25,7 @@ interface GeoCube {
   inflate?: number;
   pivot?: [number, number, number];
   rotation?: [number, number, number];
+  mirror?: boolean;
 }
 
 interface GeoBone {
@@ -32,6 +33,7 @@ interface GeoBone {
   parent?: string;
   pivot?: [number, number, number];
   rotation?: [number, number, number];
+  mirror?: boolean;
   cubes?: GeoCube[];
 }
 
@@ -90,52 +92,65 @@ export interface GunModel {
 /**
  * Maps GeckoLib 1.12.0 box UV to Three.js BoxGeometry UV attribute.
  *
- * GeckoLib face layout (texels, from [uOff, vOff]):
- *   Top:    [uOff+sz .. uOff+sz+sx]        × [vOff .. vOff+sz]
- *   Bottom: [uOff+2sz+sx .. uOff+2sz+2sx]  × [vOff .. vOff+sz]
- *   West:   [uOff .. uOff+sz]              × [vOff+sz .. vOff+sz+sy]
- *   North:  [uOff+sz .. uOff+sz+sx]        × [vOff+sz .. vOff+sz+sy]
- *   East:   [uOff+sz+sx .. uOff+2sz+sx]    × [vOff+sz .. vOff+sz+sy]
- *   South:  [uOff+2sz+sx .. uOff+2sz+2sx]  × [vOff+sz .. vOff+sz+sy]
+ * Implements Blockbench's exact algorithm (canvas.js face_order + cube.js updateUV).
+ * Three.js BoxGeometry vertex order is identical to Blockbench's setShape for all 6 faces,
+ * so UV slots map directly.
  *
- * Three.js BoxGeometry face order: +X(East), -X(West), +Y(Top), -Y(Bottom), +Z(South), -Z(North)
+ * Face regions in texture texels (Blockbench face_list, offset by [uOff, vOff]):
+ *   East:  u=[uOff,          uOff+sz],         v=[vOff+sz, vOff+sz+sy]
+ *   West:  u=[uOff+sz+sx,    uOff+2sz+sx],     v=[vOff+sz, vOff+sz+sy]
+ *   Up:    u=[uOff+sz+sx,    uOff+sz],          v=[vOff+sz, vOff]       ← BOTH reversed
+ *   Down:  u=[uOff+sz+2sx,   uOff+sz+sx],       v=[vOff,    vOff+sz]   ← U reversed
+ *   South: u=[uOff+2sz+sx,   uOff+2sz+2sx],     v=[vOff+sz, vOff+sz+sy]
+ *   North: u=[uOff+sz,       uOff+sz+sx],        v=[vOff+sz, vOff+sz+sy]
  */
 export function setBoxUV(
   geo: THREE.BoxGeometry,
   uOff: number, vOff: number,
   sx: number, sy: number, sz: number,
   tw: number, th: number,
+  mirror: boolean = false,
 ): void {
   const uvAttr = geo.getAttribute("uv") as THREE.BufferAttribute;
   const uvArr  = uvAttr.array as Float32Array;
 
-  // Write one face's 4 UV pairs into the flat attribute array.
-  // Three.js BoxGeometry vertex winding per face: TL, TR, BL, BR (in UV space)
-  // We map texel region [u0..u1] × [v0..v1] with optional flips.
-  function face(
-    fi: number,
-    u0: number, v0: number, u1: number, v1: number,
-    flipU: boolean, flipV: boolean,
-  ): void {
-    const au0 = flipU ? u1 / tw : u0 / tw;
-    const au1 = flipU ? u0 / tw : u1 / tw;
-    const av0 = flipV ? 1 - v1 / th : 1 - v0 / th;
-    const av1 = flipV ? 1 - v0 / th : 1 - v1 / th;
-    // Vertex order: 0=(u0,v1) 1=(u1,v1) 2=(u0,v0) 3=(u1,v0) in UV coords
-    const b = fi * 8;
-    uvArr[b + 0] = au0; uvArr[b + 1] = av1;
-    uvArr[b + 2] = au1; uvArr[b + 3] = av1;
-    uvArr[b + 4] = au0; uvArr[b + 5] = av0;
-    uvArr[b + 6] = au1; uvArr[b + 7] = av0;
+  // [u0, v0, u1, v1] for each face in Three.js order (East, West, Up, Down, South, North)
+  const F: [number, number, number, number][] = [
+    [uOff,                  vOff + sz,      uOff + sz,              vOff + sz + sy], // East
+    [uOff + sz + sx,        vOff + sz,      uOff + 2*sz + sx,       vOff + sz + sy], // West
+    [uOff + sz + sx,        vOff + sz,      uOff + sz,              vOff],           // Up (both reversed)
+    [uOff + sz + 2*sx,      vOff,           uOff + sz + sx,         vOff + sz],      // Down (U reversed)
+    [uOff + 2*sz + sx,      vOff + sz,      uOff + 2*sz + 2*sx,    vOff + sz + sy], // South
+    [uOff + sz,             vOff + sz,      uOff + sz + sx,         vOff + sz + sy], // North
+  ];
+
+  if (mirror) {
+    // Flip U on every face: swap u0 ↔ u1
+    for (const f of F) { const t = f[0]; f[0] = f[2]; f[2] = t; }
+    // Then swap East (0) and West (1) entirely
+    const [eu0, eu2] = [F[0][0], F[0][2]];
+    F[0][0] = F[1][0]; F[0][2] = F[1][2];
+    F[1][0] = eu0;     F[1][2] = eu2;
   }
 
-  // Three.js face order: +X(East), -X(West), +Y(Top), -Y(Bottom), +Z(South), -Z(North)
-  face(0, uOff + sz + sx,   vOff + sz, uOff + 2 * sz + sx,  vOff + sz + sy, true,  false); // East
-  face(1, uOff,             vOff + sz, uOff + sz,            vOff + sz + sy, false, false); // West
-  face(2, uOff + sz,        vOff,      uOff + sz + sx,       vOff + sz,      false, true ); // Top
-  face(3, uOff + 2 * sz + sx, vOff,   uOff + 2 * sz + 2*sx, vOff + sz,      false, false); // Bottom
-  face(4, uOff + 2 * sz + sx, vOff + sz, uOff + 2 * sz + 2*sx, vOff + sz + sy, true, false); // South
-  face(5, uOff + sz,        vOff + sz, uOff + sz + sx,       vOff + sz + sy, false, false); // North
+  const M = 1 / 64; // Blockbench anti-bleeding margin (box UV only)
+
+  for (let fi = 0; fi < 6; fi++) {
+    let [u0, v0, u1, v1] = F[fi];
+    // Pull each boundary inward by M, direction-aware
+    if (u0 <= u1) { u0 += M; u1 -= M; } else { u0 -= M; u1 += M; }
+    if (v0 <= v1) { v0 += M; v1 -= M; } else { v0 -= M; v1 += M; }
+    // UV slot assignment matching Blockbench updateUV (canvas.js line 1399-1402):
+    //   slot 0 = arr[0] = top-left (v0 = top of texture region)
+    //   slot 2 = arr[1] = top-right
+    //   slot 4 = arr[2] = bottom-left (v1 = bottom)
+    //   slot 6 = arr[3] = bottom-right
+    const b = fi * 8;
+    uvArr[b + 0] = u0 / tw; uvArr[b + 1] = 1 - v0 / th; // top-left
+    uvArr[b + 2] = u1 / tw; uvArr[b + 3] = 1 - v0 / th; // top-right
+    uvArr[b + 4] = u0 / tw; uvArr[b + 5] = 1 - v1 / th; // bottom-left
+    uvArr[b + 6] = u1 / tw; uvArr[b + 7] = 1 - v1 / th; // bottom-right
+  }
 
   uvAttr.needsUpdate = true;
 }
@@ -150,29 +165,132 @@ function setBoxUVPerFace(
   geo: THREE.BoxGeometry,
   uvSpec: Partial<Record<"north" | "south" | "east" | "west" | "up" | "down", PerFaceUV>>,
   tw: number, th: number,
+  alphaData?: Uint8ClampedArray,
 ): void {
-  const uvAttr = geo.getAttribute("uv") as THREE.BufferAttribute;
-  const uvArr  = uvAttr.array as Float32Array;
+  const uvAttr  = geo.getAttribute("uv") as THREE.BufferAttribute;
+  const uvArr   = uvAttr.array as Float32Array;
+  const posAttr = geo.getAttribute("position") as THREE.BufferAttribute;
+  const posArr  = posAttr.array as Float32Array;
 
   // Three.js BoxGeometry face order: +X(East), -X(West), +Y(Top/up), -Y(Bottom/down), +Z(South), -Z(North)
   const FACE_INDEX = { east: 0, west: 1, up: 2, down: 3, south: 4, north: 5 } as const;
 
+  const collapsePos = (fi: number) => {
+    const pb = fi * 4 * 3;
+    const x0 = posArr[pb], y0 = posArr[pb + 1], z0 = posArr[pb + 2];
+    for (let v = 1; v < 4; v++) {
+      posArr[pb + v * 3]     = x0;
+      posArr[pb + v * 3 + 1] = y0;
+      posArr[pb + v * 3 + 2] = z0;
+    }
+  };
+
   for (const faceName of Object.keys(FACE_INDEX) as (keyof typeof FACE_INDEX)[]) {
     const spec = uvSpec[faceName];
-    if (!spec) continue;
+    const fi = FACE_INDEX[faceName];
+    if (!spec) {
+      // Bedrock geo files routinely omit faces that touch another cube and
+      // are never visible (a texture-atlas-space optimization) — roughly 75%
+      // of the M4A1's 1006 cubes have at least one omitted face. Leaving
+      // Three.js's default box UV for that face samples an arbitrary, wrong
+      // part of the texture (rather than "no face"), which alphaTest then
+      // either discards as a visible hole or renders with the wrong color.
+      // Collapse the face's 4 vertices to a single point instead — a
+      // genuinely zero-area face, invisible regardless of texture content,
+      // matching "this face doesn't exist" semantics exactly.
+      collapsePos(fi);
+      continue;
+    }
     const [u0, v0] = spec.uv;
     const [w, h]   = spec.uv_size;
     const u1 = u0 + w, v1 = v0 + h;
+    // If the specified UV region is also fully transparent, collapse it.
+    if (alphaData) {
+      const ix0 = Math.round(Math.min(u0, u1));
+      const ix1 = Math.round(Math.max(u0, u1));
+      const iy0 = Math.round(Math.min(v0, v1));
+      const iy1 = Math.round(Math.max(v0, v1));
+      let hasOpaque = false;
+      outer: for (let y = iy0; y < iy1; y++) {
+        for (let x = ix0; x < ix1; x++) {
+          if (x >= 0 && x < tw && y >= 0 && y < th) {
+            if (alphaData[(y * tw + x) * 4 + 3] > 12) { hasOpaque = true; break outer; }
+          }
+        }
+      }
+      if (!hasOpaque) { collapsePos(fi); continue; }
+    }
+    // No margin — Blockbench applies anti-bleeding only for box UV (1/64 texel),
+    // never for per-face UV. Raw UV values used directly, matching Blockbench updateUV.
     const au0 = u0 / tw, au1 = u1 / tw;
     const av0 = 1 - v0 / th, av1 = 1 - v1 / th;
-    const b = FACE_INDEX[faceName] * 8;
-    uvArr[b + 0] = au0; uvArr[b + 1] = av1;
-    uvArr[b + 2] = au1; uvArr[b + 3] = av1;
-    uvArr[b + 4] = au0; uvArr[b + 5] = av0;
-    uvArr[b + 6] = au1; uvArr[b + 7] = av0;
+    const b = fi * 8;
+    // Slot order matches Blockbench updateUV (canvas.js line 1399-1402):
+    //   arr[0]=[u0,1-v0] → slot 0,1 (top);  arr[2]=[u0,1-v1] → slot 4,5 (bottom)
+    uvArr[b + 0] = au0; uvArr[b + 1] = av0;
+    uvArr[b + 2] = au1; uvArr[b + 3] = av0;
+    uvArr[b + 4] = au0; uvArr[b + 5] = av1;
+    uvArr[b + 6] = au1; uvArr[b + 7] = av1;
   }
 
   uvAttr.needsUpdate = true;
+  posAttr.needsUpdate = true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Geometry merge helpers (used by buildGeoModel to batch cubes per bone)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Merges an array of BufferGeometries (already transformed into bone-local
+ * space via applyMatrix4) into one. Returns the single input unchanged when
+ * there is only one, avoiding an unnecessary copy.
+ */
+function mergeGeoEntries(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  if (geos.length === 1) return geos[0];
+
+  const posArrs:  Float32Array[] = [];
+  const normArrs: Float32Array[] = [];
+  const uvArrs:   Float32Array[] = [];
+  const idxParts: number[][] = [];
+  let vertCount = 0;
+
+  for (const g of geos) {
+    const pos  = (g.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
+    const norm = (g.getAttribute("normal")   as THREE.BufferAttribute).array as Float32Array;
+    const uv   = (g.getAttribute("uv")       as THREE.BufferAttribute).array as Float32Array;
+    posArrs.push(pos);
+    normArrs.push(norm);
+    uvArrs.push(uv);
+    const src = g.getIndex()!.array;
+    const part: number[] = new Array(src.length);
+    for (let i = 0; i < src.length; i++) part[i] = src[i] + vertCount;
+    idxParts.push(part);
+    vertCount += pos.length / 3;
+  }
+
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.BufferAttribute(concatF32(posArrs),  3));
+  out.setAttribute("normal",   new THREE.BufferAttribute(concatF32(normArrs), 3));
+  out.setAttribute("uv",       new THREE.BufferAttribute(concatF32(uvArrs),   2));
+
+  const totalIdx = idxParts.reduce((s, a) => s + a.length, 0);
+  const IdxCtor  = vertCount > 65535 ? Uint32Array : Uint16Array;
+  const idxOut   = new IdxCtor(totalIdx);
+  let off = 0;
+  for (const part of idxParts) for (const v of part) idxOut[off++] = v;
+  out.setIndex(new THREE.BufferAttribute(idxOut, 1));
+
+  return out;
+}
+
+function concatF32(arrays: Float32Array[]): Float32Array {
+  let len = 0;
+  for (const a of arrays) len += a.length;
+  const out = new Float32Array(len);
+  let off = 0;
+  for (const a of arrays) { out.set(a, off); off += a.length; }
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,8 +305,14 @@ function parseKeys(obj: unknown): Keyframe[] {
   return Object.entries(obj as Record<string, unknown>)
     .map(([k, v]) => {
       const t = parseFloat(k);
-      const entry = v as { vector?: unknown; easing?: string } | unknown[];
-      let vec: unknown = Array.isArray(entry) ? entry : (entry as { vector?: unknown }).vector ?? entry;
+      const entry = v as { vector?: unknown; post?: unknown; pre?: unknown; easing?: string } | unknown[];
+      // Some TACZ animations use {post, lerp_mode} Catmull-Rom format — treat
+      // `post` as the keyframe vector (the value at this timestamp as time exits).
+      let vec: unknown = Array.isArray(entry)
+        ? entry
+        : (entry as { vector?: unknown; post?: unknown }).vector
+          ?? (entry as { post?: unknown }).post
+          ?? [0, 0, 0];
       if (!Array.isArray(vec)) vec = [0, 0, 0];
       const easing = Array.isArray(entry) ? "linear" : ((entry as { easing?: string }).easing ?? "linear");
       return { t, vec: [...(vec as number[])] as [number, number, number], easing };
@@ -242,6 +366,7 @@ export function buildGeoModel(
   geoData: GeoData,
   tex: THREE.Texture,
   S: number = 1 / 16,
+  alphaData?: Uint8ClampedArray,
 ): GunModel {
   const g    = geoData["minecraft:geometry"][0];
   const desc = g.description;
@@ -261,6 +386,21 @@ export function buildGeoModel(
     boneGroups[name]      = new THREE.Group();
     boneGroups[name].name = name;
   }
+
+  // One material shared by every cube in this model — all cubes use the same
+  // texture atlas, and sharing a material instance lets Three.js avoid redundant
+  // GL program switches and uniform uploads between bones.
+  // Cutout render mode (alphaTest, no blending) keeps correct Z-buffer behaviour
+  // for models with 1000+ cubes — transparent: true would put them all into
+  // Three.js's distance-sorted queue which breaks per-pixel depth ordering.
+  const mat = new THREE.MeshLambertMaterial({
+    map: tex,
+    transparent: false,
+    alphaTest: 0.05,
+    side: THREE.DoubleSide,
+  });
+
+  const _scale1 = new THREE.Vector3(1, 1, 1); // reused for Matrix4.compose calls
 
   // Position each bone relative to its parent's pivot, add meshes
   for (const [name, bone] of Object.entries(boneDefs)) {
@@ -307,63 +447,72 @@ export function buildGeoModel(
 
     if (!bone.cubes) continue;
 
+    // Collect all cube geometries for this bone, bake each cube's local-to-bone
+    // transform into the vertex data, then merge them into one Mesh per bone.
+    // This cuts draw calls from (total cubes across all bones) down to (total
+    // bones with cubes) — a ~5-7× reduction for a typical gun model.
+    const boneGeos: THREE.BufferGeometry[] = [];
+
     for (const cube of bone.cubes) {
       const [ox, oy, oz] = cube.origin;
       const [csx, csy, csz] = cube.size;
-      const inf  = cube.inflate ?? 0;
-      const asx  = (csx + 2 * inf) * S;
-      const asy  = (csy + 2 * inf) * S;
-      const asz  = (csz + 2 * inf) * S;
+      const inf = cube.inflate ?? 0;
+      const asx = (csx + 2 * inf) * S;
+      const asy = (csy + 2 * inf) * S;
+      const asz = (csz + 2 * inf) * S;
 
       const geo = new THREE.BoxGeometry(asx, asy, asz);
       if (cube.uv) {
         if (Array.isArray(cube.uv)) {
-          setBoxUV(geo, cube.uv[0], cube.uv[1], csx, csy, csz, tw, th);
+          const cubeMirror = cube.mirror !== undefined ? cube.mirror : (bone.mirror ?? false);
+          setBoxUV(geo, cube.uv[0], cube.uv[1], csx, csy, csz, tw, th, cubeMirror);
         } else {
-          setBoxUVPerFace(geo, cube.uv, tw, th);
+          setBoxUVPerFace(geo, cube.uv, tw, th, alphaData);
         }
       }
 
-      const mat  = new THREE.MeshLambertMaterial({
-        map: tex,
-        transparent: true,
-        alphaTest: 0.05,
-        side: THREE.DoubleSide,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-
+      // Compute the cube's matrix in bone-local space and bake it in.
+      // inflate expands the box symmetrically — center stays at (ox+sx/2, oy+sy/2, oz+sz/2).
+      let m4: THREE.Matrix4;
       if (cube.pivot && cube.rotation) {
-        // Cube with its own pivot rotation
         const cp  = cube.pivot;
         const rot = cube.rotation;
-        const pg  = new THREE.Group();
-        pg.position.set(
+        // Pivot group: translation + ZYX rotation (same convention as bone rest-pose)
+        const pgPos  = new THREE.Vector3(
           -(cp[0] - pivot[0]) * S,
           (cp[1] - pivot[1]) * S,
           (cp[2] - pivot[2]) * S,
         );
-        pg.rotation.order = "ZYX";
-        pg.rotation.z = THREE.MathUtils.degToRad(rot[2]);
-        pg.rotation.y = THREE.MathUtils.degToRad(-rot[1]);
-        pg.rotation.x = THREE.MathUtils.degToRad(-rot[0]);
-        // inflate expands the box outward symmetrically — center stays at (ox+sx/2, oy+sy/2, oz+sz/2)
-        mesh.position.set(
-          -(ox + csx / 2 - cp[0]) * S,
-          (oy + csy / 2 - cp[1]) * S,
-          (oz + csz / 2 - cp[2]) * S,
+        const pgQuat = new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(
+            THREE.MathUtils.degToRad(-rot[0]),
+            THREE.MathUtils.degToRad(-rot[1]),
+            THREE.MathUtils.degToRad(rot[2]),
+            "ZYX",
+          ),
         );
-        pg.add(mesh);
-        grp.add(pg);
+        m4 = new THREE.Matrix4().compose(pgPos, pgQuat, _scale1);
+        // Right-multiply by the mesh's local translation inside the pivot group
+        m4.multiply(
+          new THREE.Matrix4().makeTranslation(
+            -(ox + csx / 2 - cp[0]) * S,
+            (oy + csy / 2 - cp[1]) * S,
+            (oz + csz / 2 - cp[2]) * S,
+          ),
+        );
       } else {
-        // Standard cube: position relative to bone pivot
-        // inflate expands outward symmetrically — center stays at (ox+sx/2, oy+sy/2, oz+sz/2)
-        mesh.position.set(
+        m4 = new THREE.Matrix4().makeTranslation(
           -(ox + csx / 2 - pivot[0]) * S,
           (oy + csy / 2 - pivot[1]) * S,
           (oz + csz / 2 - pivot[2]) * S,
         );
-        grp.add(mesh);
       }
+      geo.applyMatrix4(m4);
+      boneGeos.push(geo);
+    }
+
+    if (boneGeos.length > 0) {
+      grp.add(new THREE.Mesh(mergeGeoEntries(boneGeos), mat));
     }
   }
 
@@ -519,15 +668,24 @@ export class GeckoAnimator {
    * Tries the Point Blank-style "animation.model.<name>" key first, then
    * falls back to the bare name directly (TACZ's animation.json files key
    * animations as plain names like "static_idle", "shoot", with no prefix).
+   *
+   * `loopOverride` forces play/hold behavior regardless of the clip's own
+   * `loop` flag, WITHOUT mutating the cached parsed animation (so other
+   * callers still see its real loop value) — needed for clips like Point
+   * Blank's "draw" (flagged loop:true in the JSON, but its actual keyframes
+   * go from a dramatic holstered pose to a neutral rest pose once, not a
+   * repeating sway; wrapping it via modulo snaps back to "holstered" every
+   * cycle). Passing `false` here plays it once and holds the final frame.
    */
-  play(name: string): void {
+  play(name: string, loopOverride?: boolean): void {
     const prefixed = "animation.model." + name;
     const full = this.data[prefixed] ? prefixed : name;
     if (!this.data[full]) {
       console.warn("[GeckoAnimator] No animation:", name);
       return;
     }
-    const next = this._parseAnim(full);
+    const parsed = this._parseAnim(full);
+    const next = parsed && loopOverride !== undefined ? { ...parsed, loop: loopOverride } : parsed;
     // Reset bones that were in the previous animation but are absent in the new one.
     // Without this, e.g. rightarm would stay stuck at its last reload rotation when
     // switching back to idle (which has no rightarm keyframe).

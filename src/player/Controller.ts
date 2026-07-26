@@ -12,7 +12,7 @@ import { FirstPersonCamera } from "./Camera";
 import { PlayerPhysics } from "./Physics";
 import { raycastWithNormal } from "../world/raycast";
 import { BType } from "../world/types";
-import { AK47 } from "../world/AK47";
+import { AK47, DEAGLE_CONFIG, MP7_CONFIG, P90_CONFIG, BALLISTA_CONFIG, LAMG_CONFIG } from "../world/AK47";
 
 const REACH = 6;
 
@@ -24,7 +24,35 @@ export const HOTBAR: BType[] = [
 export class PlayerController {
   readonly fpCamera: FirstPersonCamera;
   readonly physics: PlayerPhysics;
-  readonly ak47 = new AK47();
+  // Two independent weapon instances — index 0 is the M4A1 (full-auto),
+  // index 1 is the Desert Eagle (semi-auto, CS:GO config).
+  readonly weapons: AK47[] = [
+    new AK47(),                    // 0 — M16A1
+    new AK47(DEAGLE_CONFIG),       // 1 — Desert Eagle
+    new AK47(MP7_CONFIG),          // 2 — MP7
+    new AK47(P90_CONFIG),          // 3 — P90
+    new AK47(BALLISTA_CONFIG),     // 4 — Ballista (AWP)
+    new AK47(LAMG_CONFIG),         // 5 — LAMG (M249)
+  ];
+  weaponIndex = 0;
+
+  get ak47(): AK47 {
+    return this.weapons[this.weaponIndex];
+  }
+
+  // AWP scope: 0 = off, 1 = first zoom (~40°), 2 = second zoom (~15°)
+  scopeLevel = 0;
+
+  switchWeapon(): void {
+    this.weapons[this.weaponIndex].releaseTrigger();
+    this.scopeLevel = 0;
+    this.weaponIndex = (this.weaponIndex + 1) % this.weapons.length;
+  }
+
+  toggleScope(): void {
+    if (this.weaponIndex !== 4) return;
+    this.scopeLevel = this.scopeLevel === 0 ? 1 : 0;
+  }
 
   selectedIndex = 0;
   locked = false;
@@ -93,7 +121,10 @@ export class PlayerController {
     document.addEventListener("mousedown", (e) => {
       if (!this.locked) return;
       if (e.button === 0) this.mouseHeld = true;
-      else if (e.button === 2) this.placeBlock();
+      else if (e.button === 2) {
+        if (this.weaponIndex === 4) this.toggleScope();
+        else this.placeBlock();
+      }
     });
     document.addEventListener("mouseup", (e) => {
       if (e.button === 0) {
@@ -107,7 +138,9 @@ export class PlayerController {
 
     document.addEventListener("keydown", (e) => {
       this.keys.add(e.code);
-      if (e.code === "KeyR" && !e.repeat) this.ak47.reload();
+      if (e.code === "KeyR" && !e.repeat) { this.scopeLevel = 0; this.ak47.reload(); }
+      if (e.code === "KeyF" && !e.repeat) this.ak47.inspect();
+      if (e.code === "KeyQ" && !e.repeat) this.switchWeapon();
       const num = parseInt(e.key, 10);
       if (num >= 1 && num <= HOTBAR.length) this.selectedIndex = num - 1;
 
@@ -186,7 +219,7 @@ export class PlayerController {
   private eyePosition(): THREE.Vector3 {
     return new THREE.Vector3(
       this.physics.position.x,
-      this.physics.position.y + this.physics.eyeHeight,
+      this.physics.smoothY + this.physics.eyeHeight,
       this.physics.position.z,
     );
   }
@@ -251,13 +284,22 @@ export class PlayerController {
     this.ak47.update(dt);
     if (this.mouseHeld && (this.locked || this.isMobile)) {
       const fired = this.ak47.fire();
+      if (fired) this.scopeLevel = 0; // AWP unscopes after each shot
       if (fired && this.onShot) {
         const eye = this.eyePosition();
-        // Shoot direction = base camera direction + current aim punch
-        const shootPitch = this.fpCamera.pitch + this.ak47.punchPitch;
-        const shootYaw   = this.fpCamera.yaw   + this.ak47.punchYaw;
+        // Bullet spread: random cone that grows with sustained fire and air time.
+        // Camera kick is purely visual; bullets scatter within the cone.
+        const airSpread     = this.physics.grounded ? 0 : 0.12;
+        const sustainSpread = Math.min(Math.abs(this.ak47.punchPitch) * 0.5, 0.07);
+        const inaccuracy    = sustainSpread + airSpread;
+        const spreadPitch = (Math.random() * 2 - 1) * inaccuracy;
+        const spreadYaw   = (Math.random() * 2 - 1) * inaccuracy;
         const dir = new THREE.Vector3(0, 0, -1)
-          .applyEuler(new THREE.Euler(shootPitch, shootYaw, 0, "YXZ"));
+          .applyEuler(new THREE.Euler(
+            this.fpCamera.pitch + spreadPitch,
+            this.fpCamera.yaw   + spreadYaw,
+            0, "YXZ",
+          ));
         this.onShot(eye, dir);
       }
     }

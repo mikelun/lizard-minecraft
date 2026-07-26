@@ -35,12 +35,21 @@ interface AABB {
   maxX: number; maxY: number; maxZ: number;
 }
 
+
 export class PlayerPhysics {
   readonly position: THREE.Vector3; // feet, center of the box's base
   readonly velocity = new THREE.Vector3();
   grounded = false;
   flying = false;
   crouching = false;
+
+  /** Smoothed Y for the camera eye — lags behind position.y on step-ups so
+   *  the view glides up rather than cutting. Physics always uses position.y. */
+  smoothY: number;
+
+  // True while the camera is still gliding up from a half-block step-up.
+  // Cleared on landing or when a real jump is initiated so jumps feel snappy.
+  private _stepping = false;
 
   private readonly spawn: THREE.Vector3;
 
@@ -53,10 +62,12 @@ export class PlayerPhysics {
   constructor(private world: World, spawn: THREE.Vector3) {
     this.spawn = spawn.clone();
     this.position = spawn.clone();
+    this.smoothY = spawn.y;
   }
 
   respawn() {
     this.position.copy(this.spawn);
+    this.smoothY = this.spawn.y;
     this.velocity.set(0, 0, 0);
     this.grounded = false;
   }
@@ -171,9 +182,17 @@ export class PlayerPhysics {
     this._tmpC[axis] += delta;
 
     if (!this.collides(this.aabbAt(this._tmpB)) && !this.collides(this.aabbAt(this._tmpC))) {
-      // Find the lowest y (down to the original) that still clears.
+      // Only auto-step/jump when grounded — prevents airborne clipping against
+      // stair sides or half-block edges from teleporting the player upward.
+      if (!this.grounded) {
+        const safeFraction = this.maxSafeFraction(axis, delta);
+        if (safeFraction > 0.001) this.position[axis] += delta * safeFraction;
+        return;
+      }
+
+      // Find the exact top of the ledge.
       let landY = this._tmpC.y;
-      const baseY = this._tmpC.y; // raisedTarget.y
+      const baseY = this._tmpC.y;
       for (let dyStep = 0.05; dyStep <= STEP_HEIGHT; dyStep += 0.05) {
         const testY = baseY - dyStep;
         if (testY <= this.position.y) break;
@@ -182,8 +201,22 @@ export class PlayerPhysics {
         if (this.collides(this.aabbAt(this._tmpA))) break;
         landY = testY;
       }
-      this.position[axis] = this._tmpC[axis];
-      this.position.y = Math.max(landY, this.position.y);
+      const needed = landY - this.position.y;
+
+      if (needed <= 0.55) {
+        // Half-block step (slab, stair top): snap position so horizontal movement
+        // isn't stalled, then let smoothY glide the camera up slowly.
+        this.position.y = landY;
+        this.position[axis] = this._tmpC[axis];
+        this._stepping = true;
+        if (this.velocity.y < 0) this.velocity.y = 0;
+      } else {
+        // Full-block ledge: force a jump so the player hops over naturally.
+        if (this.velocity.y <= 0) {
+          this.velocity.y = JUMP_FORCE;
+          this._stepping = false;
+        }
+      }
       return;
     }
 
@@ -206,6 +239,8 @@ export class PlayerPhysics {
     if (this.flying) return;
     if (this.grounded) {
       this.velocity.y = JUMP_FORCE;
+      this._stepping = false;
+      this.smoothY = this.position.y; // snap now, not next frame
       this.grounded = false;
     }
   }
@@ -256,5 +291,15 @@ export class PlayerPhysics {
 
     this.moveAxisWithStep("x", vx * dt);
     this.moveAxisWithStep("z", vz * dt);
+
+    // Smooth the camera Y only during half-block step-ups (_stepping flag).
+    // Real jumps and falling snap immediately so they feel snappy.
+    if (this._stepping && this.position.y > this.smoothY) {
+      this.smoothY += (this.position.y - this.smoothY) * Math.min(1, 12 * dt);
+      if (this.smoothY >= this.position.y) { this.smoothY = this.position.y; this._stepping = false; }
+    } else {
+      this._stepping = false;
+      this.smoothY = this.position.y;
+    }
   }
 }

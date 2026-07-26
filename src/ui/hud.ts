@@ -90,6 +90,10 @@ export interface Hud {
   setAmmo(current: number, reserve: number, reloading: boolean): void;
   /** Update the dynamic crosshair gap (pixels from centre to arm start). */
   updateCrosshair(gap: number): void;
+  /** Show/hide the AWP scope overlay. level 0 = off, 1 = first zoom, 2 = second zoom. */
+  setScopeOverlay(level: number): void;
+  /** Blur the scope reticle lines by `px` pixels (0 = sharp, ~3 = moving blur). */
+  setScopeBlur(px: number): void;
 }
 
 export function createHud(container: HTMLElement): Hud {
@@ -172,7 +176,9 @@ export function createHud(container: HTMLElement): Hud {
   root.appendChild(ammoEl);
 
   function setAmmo(current: number, reserve: number, reloading: boolean) {
-    if (reloading) {
+    if (current < 0) {
+      ammoEl.innerHTML = ""; // melee / no ammo display
+    } else if (reloading) {
       ammoEl.innerHTML = `<span style="font-size:28px;color:#ffcc44;">RELOADING</span>`;
     } else {
       const lowColor = current <= 5 ? "#ff4444" : "#fff";
@@ -191,11 +197,110 @@ export function createHud(container: HTMLElement): Hud {
   }
   setSelected(0);
 
+  // ── AWP scope overlay ─────────────────────────────────────────────────────
+  // Two layers: static panels (black surround + vignette, never blurred) and
+  // the reticle lines (blurred via CSS filter when the player is moving).
+  const scopePanels  = document.createElement("canvas");
+  const scopeReticle = document.createElement("canvas");
+  const cvStyle = "position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;";
+  scopePanels.style.cssText  = cvStyle;
+  scopeReticle.style.cssText = cvStyle;
+  root.appendChild(scopePanels);
+  root.appendChild(scopeReticle);
+
+  let scopeLevel = 0;
+
+  function drawScopePanels() {
+    const w = window.innerWidth, h = window.innerHeight;
+    scopePanels.width = w; scopePanels.height = h;
+    const ctx = scopePanels.getContext("2d")!;
+    ctx.clearRect(0, 0, w, h);
+
+    const cx = w / 2, cy = h / 2;
+    const r  = Math.min(w, h) * 0.42;
+
+    // Black panels outside the circle
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2, true);
+    ctx.fill("evenodd");
+
+    // Vignette inside the circle
+    const grad = ctx.createRadialGradient(cx, cy, r * 0.7, cx, cy, r);
+    grad.addColorStop(0, "rgba(0,0,0,0)");
+    grad.addColorStop(1, "rgba(0,0,0,0.45)");
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Circle border
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+
+  function drawScopeReticle() {
+    const w = window.innerWidth, h = window.innerHeight;
+    scopeReticle.width = w; scopeReticle.height = h;
+    const ctx = scopeReticle.getContext("2d")!;
+    ctx.clearRect(0, 0, w, h);
+
+    const cx = w / 2, cy = h / 2;
+    const r  = Math.min(w, h) * 0.42;
+
+    const lineColor = "rgba(0,0,0,0.85)";
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.5;
+
+    const gap = 12;
+    ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx - gap, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + gap, cy); ctx.lineTo(cx + r, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy - gap); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy + gap); ctx.lineTo(cx, cy + r); ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+    ctx.fillStyle = lineColor;
+    ctx.fill();
+
+  }
+
+  function setScopeOverlay(level: number) {
+    const wasOff = scopeLevel === 0;
+    scopeLevel = level;
+    if (level === 0) {
+      scopePanels.style.display  = "none";
+      scopeReticle.style.display = "none";
+      xhRoot.style.display = "";
+    } else {
+      scopePanels.style.display  = "block";
+      scopeReticle.style.display = "block";
+      xhRoot.style.display = "none";
+      // Redraw panels on level change or first show (reticle only on level change)
+      if (wasOff || level !== scopeLevel) drawScopePanels();
+      drawScopeReticle();
+    }
+  }
+
+  function setScopeBlur(px: number) {
+    scopeReticle.style.filter = px > 0.05 ? `blur(${px.toFixed(2)}px)` : "";
+  }
+
+  window.addEventListener("resize", () => {
+    if (scopeLevel > 0) { drawScopePanels(); drawScopeReticle(); }
+  });
+
   return {
     setSelected,
     setDebugText: (text: string) => { debugText.textContent = text; },
     showPrompt: (_show: boolean) => {},
     setAmmo,
     updateCrosshair,
+    setScopeOverlay,
+    setScopeBlur,
   };
 }

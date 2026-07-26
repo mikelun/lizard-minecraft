@@ -72,6 +72,9 @@ function getMaterial(url: string): THREE.MeshLambertMaterial {
     transparent: true,
     alphaTest: 0.5,
     side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -4,
   });
   matCache.set(url, m);
   return m;

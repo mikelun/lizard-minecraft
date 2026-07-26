@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "node server/index.cjs"
   },
   "dependencies": {
     "simplex-noise": "^4.0.3",
     "skinview3d": "^3.4.2",
-    "three": "^0.171.0"
+    "three": "^0.171.0",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.49.0"
   },
   "devDependencies": {
     "@types/three": "^0.170.0",

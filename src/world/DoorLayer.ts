@@ -1,15 +1,19 @@
 // © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
-// DoorLayer — renders oak doors and trapdoors with correct Minecraft geometry.
+// DoorLayer — renders doors and trapdoors with correct Minecraft geometry using
+// merged BufferGeometry (one mesh per material type → O(1) draw calls).
 //
 // Oak door (closed):
-//   3/16-thick panel placed at the correct edge of the block based on facing.
-//   Facing is encoded in the BType: door_base + facing  (N=0, S=1, E=2, W=3)
-//   Both the lower and upper door halves carry the same facing ID.
-//   Upper/lower is inferred by checking whether the block below is also a door.
-//   Textures: oak_door_bottom.png (lower half), oak_door_top.png (upper half).
+//   3/16-thick panel at the block edge based on facing.
 //   Legacy BType.oak_door (48) is rendered as south-facing.
 //
 // Trapdoors: BType = trapdoor_base + type*16 + open*8 + facing*2 + half
+//   Closed flat:  3/16-thick slab at bottom (half=0) or top (half=1).
+//   Open vertical: 16×16×3/16 slab standing against the facing wall.
+//   UV matches canonical Minecraft 1.21.5 models:
+//     - Closed up/down: full texture [0,0,1,1]
+//     - Closed sides:   bottom 3 rows [0,0,1,3/16]  (MC uv [0,16,16,13])
+//     - Open front/back: full texture [0,0,1,1]
+//     - Open top/bottom: bottom 3 rows [0,0,1,3/16]
 
 import * as THREE from "three";
 import { makeBlockMat } from "./blockShader";
@@ -64,15 +68,14 @@ function decodeDoor(id: number): { type: number; facing: number } {
   return { type: Math.floor(n / 4), facing: n % 4 };
 }
 
-/** True for any trapdoor BType. */
+/** True for any trapdoor BType (legacy 49, or encoded 114–177). */
 export function isTrapdoorBType(id: number): boolean {
-  return id === BType.oak_trapdoor || (id >= 114 && id <= 177);
+  return id === BType.oak_trapdoor || (id >= TRAP_BASE && id <= 177);
 }
 
 export const DOOR_BTYPES = new Set<number>([
   BType.oak_door,
   BType.oak_trapdoor,
-  // Encoded door range 185-188 and trapdoor range checked via isDoorBType/isTrapdoorBType
 ]);
 
 interface DoorPos { x: number; y: number; z: number; id: number }
@@ -170,22 +173,19 @@ function emitDoor(
   }
 }
 
-// ── Trapdoor helpers (unchanged) ──────────────────────────────────────────────
+// ── Trapdoor helpers ──────────────────────────────────────────────────────────
 
-/** Decode a trapdoor BType into its components. */
+/** Decode a trapdoor BType → { type, open, facing, half }. */
 function decodeTrap(id: number): { type: number; open: number; facing: number; half: number } {
-  if (id === BType.oak_trapdoor) {
-    return { type: 0, open: 0, facing: 0, half: 0 };
-  }
+  if (id === BType.oak_trapdoor) return { type: 0, open: 0, facing: 0, half: 0 };
   const n = id - TRAP_BASE;
-  return {
-    type:   (n >> 4) & 3,
-    open:   (n >> 3) & 1,
-    facing: (n >> 1) & 3,
-    half:   n & 1,
-  };
+  return { type: (n >> 4) & 3, open: (n >> 3) & 1, facing: (n >> 1) & 3, half: n & 1 };
 }
 
+/**
+ * Emit a closed box. uvTop is used for up/down, uvSide for all four side faces.
+ * [u0,v0,u1,v1] maps to [BL, BR, TR, TL] on each face (v increases upward).
+ */
 function emitBox(
   x: number, y: number, z: number,
   x0: number, y0: number, z0: number,
@@ -195,11 +195,9 @@ function emitBox(
   verts: number[], uvs: number[], idx: number[], vi: { n: number },
 ) {
   function quad(
-    ax: number,ay: number,az: number,
-    bx: number,by: number,bz: number,
-    cx: number,cy: number,cz: number,
-    dx: number,dy: number,dz: number,
-    u0: number,v0: number,u1: number,v1: number,
+    ax:number,ay:number,az:number, bx:number,by:number,bz:number,
+    cx:number,cy:number,cz:number, dx:number,dy:number,dz:number,
+    u0:number,v0:number,u1:number,v1:number,
   ) {
     const i = vi.n;
     verts.push(x+ax,y+ay,z+az, x+bx,y+by,z+bz, x+cx,y+cy,z+cz, x+dx,y+dy,z+dz);
@@ -209,12 +207,12 @@ function emitBox(
   }
   const [tu0,tv0,tu1,tv1] = uvTop;
   const [su0,sv0,su1,sv1] = uvSide;
-  quad(x0,y1,z0, x1,y1,z0, x1,y1,z1, x0,y1,z1,  tu0,tv0, tu1,tv1);
-  quad(x0,y0,z1, x1,y0,z1, x1,y0,z0, x0,y0,z0,  tu0,tv0, tu1,tv1);
-  quad(x1,y0,z0, x0,y0,z0, x0,y1,z0, x1,y1,z0,  su0,sv0, su1,sv1);
-  quad(x0,y0,z1, x1,y0,z1, x1,y1,z1, x0,y1,z1,  su0,sv0, su1,sv1);
-  quad(x1,y0,z1, x1,y0,z0, x1,y1,z0, x1,y1,z1,  su0,sv0, su1,sv1);
-  quad(x0,y0,z0, x0,y0,z1, x0,y1,z1, x0,y1,z0,  su0,sv0, su1,sv1);
+  quad(x0,y1,z0, x1,y1,z0, x1,y1,z1, x0,y1,z1, tu0,tv0,tu1,tv1); // top
+  quad(x0,y0,z1, x1,y0,z1, x1,y0,z0, x0,y0,z0, tu0,tv0,tu1,tv1); // bottom
+  quad(x1,y0,z0, x0,y0,z0, x0,y1,z0, x1,y1,z0, su0,sv0,su1,sv1); // north
+  quad(x0,y0,z1, x1,y0,z1, x1,y1,z1, x0,y1,z1, su0,sv0,su1,sv1); // south
+  quad(x1,y0,z1, x1,y0,z0, x1,y1,z0, x1,y1,z1, su0,sv0,su1,sv1); // east
+  quad(x0,y0,z0, x0,y0,z1, x0,y1,z1, x0,y1,z0, su0,sv0,su1,sv1); // west
 }
 
 // ── DoorLayer class ───────────────────────────────────────────────────────────
@@ -226,11 +224,11 @@ export class DoorLayer {
   private positions: DoorPos[] = [];
   private rebuildPending = false;
 
-  // Active meshes — keyed by "type,half" (e.g. "1,0" = warped bottom)
+  // Active meshes — keyed by "type,half" (e.g. "1,0" = warped bottom half)
   private doorMeshes = new Map<string, THREE.Mesh>();
   private trapdoorMeshes: (THREE.Mesh | null)[] = [null, null, null, null];
 
-  // Per-type materials: index = door type (0-11), [0]=bottom [1]=top
+  // Per-type materials
   private readonly doorMats: [THREE.Material, THREE.Material][];
   private readonly trapdoorMats: THREE.Material[];
 
@@ -296,7 +294,6 @@ export class DoorLayer {
     for (const m of this.trapdoorMeshes) { if (m) { this.group.remove(m); m.geometry.dispose(); } }
     this.trapdoorMeshes = [null, null, null, null];
 
-    // Group door positions by (type, half): key = "type,half"
     const doorGroups = new Map<string, DoorPos[]>();
     const trapdoorPosns: DoorPos[][] = [[], [], [], []];
 
@@ -304,7 +301,7 @@ export class DoorLayer {
       if (isDoorBType(p.id)) {
         const { type } = decodeDoor(p.id);
         const belowId = this.getBlock ? (this.getBlock(p.x, p.y - 1, p.z) as number) : 0;
-        const half = isDoorBType(belowId) ? 1 : 0; // 0=bottom, 1=top
+        const half = isDoorBType(belowId) ? 1 : 0;
         const key = `${type},${half}`;
         if (!doorGroups.has(key)) doorGroups.set(key, []);
         doorGroups.get(key)!.push(p);
@@ -316,8 +313,7 @@ export class DoorLayer {
 
     for (const [key, posns] of doorGroups) {
       const [typeStr, halfStr] = key.split(',');
-      const type = Number(typeStr);
-      const half = Number(halfStr); // 0=bottom tex, 1=top tex
+      const type = Number(typeStr), half = Number(halfStr);
       const mat = this.doorMats[Math.min(type, this.doorMats.length - 1)][half];
       const mesh = this.buildDoors(posns, mat);
       if (mesh) this.doorMeshes.set(key, mesh);
@@ -351,32 +347,38 @@ export class DoorLayer {
     if (posns.length === 0) return null;
     const verts: number[] = [], uvs: number[] = [], idx: number[] = [];
     const vi = { n: 0 };
+    const D = TRAP_D;
 
     for (const { x, y, z, id } of posns) {
       const { open, facing, half } = decodeTrap(id);
 
       if (open === 0) {
-        const y0 = half === 1 ? 1 - TRAP_D : 0;
-        const y1 = half === 1 ? 1          : TRAP_D;
-        emitBox(x, y, z,
-          0, y0, 0,  1, y1, 1,
+        // Closed flat slab — correct Minecraft UVs:
+        //   up/down: full texture [0,0,1,1]
+        //   sides:   bottom 3 rows [0,0,1,D]  (MC uv [0,16,16,13])
+        const y0 = half === 1 ? 1 - D : 0;
+        const y1 = half === 1 ? 1     : D;
+        emitBox(x, y, z, 0, y0, 0, 1, y1, 1,
           [0, 0, 1, 1],
-          [0, 1-TRAP_D, 1, 1],
+          [0, 0, 1, D],
           verts, uvs, idx, vi);
       } else {
+        // Open vertical slab against the facing wall.
+        //   front/back: full texture [0,0,1,1]
+        //   top/bottom: narrow strip [0,0,1,D]  or  [0,0,D,1] for E/W
         switch (facing) {
-          case 0:
-            emitBox(x, y, z, 0, 0, 0, 1, 1, TRAP_D,
-              [0, 0, 1, 1], [0, 0, 1, 1], verts, uvs, idx, vi); break;
-          case 1:
-            emitBox(x, y, z, 0, 0, 1-TRAP_D, 1, 1, 1,
-              [0, 0, 1, 1], [0, 0, 1, 1], verts, uvs, idx, vi); break;
-          case 2:
-            emitBox(x, y, z, 1-TRAP_D, 0, 0, 1, 1, 1,
-              [0, 0, 1, 1], [0, 0, 1, 1], verts, uvs, idx, vi); break;
-          case 3:
-            emitBox(x, y, z, 0, 0, 0, TRAP_D, 1, 1,
-              [0, 0, 1, 1], [0, 0, 1, 1], verts, uvs, idx, vi); break;
+          case 0: // north: slab at -Z edge
+            emitBox(x, y, z, 0, 0, 0, 1, 1, D,
+              [0, 0, 1, D], [0, 0, 1, 1], verts, uvs, idx, vi); break;
+          case 1: // south: slab at +Z edge
+            emitBox(x, y, z, 0, 0, 1 - D, 1, 1, 1,
+              [0, 0, 1, D], [0, 0, 1, 1], verts, uvs, idx, vi); break;
+          case 2: // east: slab at +X edge
+            emitBox(x, y, z, 1 - D, 0, 0, 1, 1, 1,
+              [0, 0, D, 1], [0, 0, 1, 1], verts, uvs, idx, vi); break;
+          case 3: // west: slab at -X edge
+            emitBox(x, y, z, 0, 0, 0, D, 1, 1,
+              [0, 0, D, 1], [0, 0, 1, 1], verts, uvs, idx, vi); break;
         }
       }
     }

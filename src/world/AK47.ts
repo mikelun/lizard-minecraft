@@ -1,14 +1,14 @@
 // © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 /**
- * CS:GO AK-47 weapon system
+ * Generic semi/full-auto weapon system.
  *
- * All timings and values match CS:GO exactly:
+ * Default config matches CS:GO AK-47:
  *   - 600 RPM  (100 ms between shots)
  *   - 30-round magazine, 90 reserve
  *   - 2.43 s reload
- *   - Deterministic 30-shot spray pattern (derived from CS:GO recoil data)
- *   - Aim-punch system: accumulated per shot, exponentially decays after release
- *   - Spray index resets 0.4 s after last shot (CS:GO weapon_recoil_cooldown)
+ *   - Deterministic 30-shot spray pattern
+ *
+ * Pass a WeaponConfig to override for other weapons (e.g. Desert Eagle).
  */
 
 // ── Spray pattern ─────────────────────────────────────────────────────────────
@@ -17,16 +17,6 @@
 //
 // Positive pitch = camera kicks UP.
 // Positive yaw   = camera kicks RIGHT.
-//
-// Values are derived from the CS:GO AK-47 recoil table:
-//   raw_x / raw_y taken from community-measured compensation data;
-//   actual_yaw  =  raw_x × SCALE
-//   actual_pitch= -raw_y × SCALE  (screen −Y = up = +pitch in world)
-//
-// SCALE = 0.0005 rad/unit, chosen so the full 30-shot pattern spans
-// ~11 ° vertically and ~5 ° horizontally — matching CS:GO observed values.
-
-const S = 0.0005; // scale factor
 
 // [yaw_delta_rad, pitch_delta_rad] — shot indices 0-29 (first shot = index 0)
 export const SPRAY_PATTERN: ReadonlyArray<readonly [number, number]> = [
@@ -62,108 +52,230 @@ export const SPRAY_PATTERN: ReadonlyArray<readonly [number, number]> = [
   [-0.033, -0.0085], // 30
 ] as const;
 
-// ── CS:GO weapon constants ────────────────────────────────────────────────────
-export const FIRE_INTERVAL_MS  = 100;   // 600 RPM
+// ── Weapon config ─────────────────────────────────────────────────────────────
+
+export interface WeaponConfig {
+  // Fire mode
+  semiAuto?: boolean;       // true = one shot per click (like Deagle); false = full-auto
+  // Ammo
+  magazineSize?: number;
+  reserveAmmo?: number;
+  // Timings (seconds unless noted)
+  fireIntervalMs?: number;  // minimum ms between shots
+  reloadTimeS?: number;
+  recoilCooldownS?: number;
+  inspectTimeS?: number;
+  // Recoil — if set, overrides spray pattern with a fixed per-shot kick
+  punchPerShot?: readonly [number, number]; // [yaw_rad, pitch_rad]
+  // Visual kick per shot (model bounce, separate from aim punch)
+  modelKickPerShot?: number;
+}
+
+// ── CS:GO weapon constants — AK-47 defaults ───────────────────────────────────
+export const FIRE_INTERVAL_MS  = 100;
 export const MAGAZINE_SIZE     = 30;
 export const RESERVE_AMMO      = 90;
 export const RELOAD_TIME_S     = 2.43;
-export const RECOIL_COOLDOWN_S = 0.4;   // spray index reset after this many s
+export const RECOIL_COOLDOWN_S = 0.4;
+export const INSPECT_TIME_S    = 8.8667;
 
-// Aim-punch decay: exponential, half-life ≈ 140 ms.
-// In CS:GO the punch decays with weapon_recoil_decay1_exp / decay2_exp; this
-// single exponential approximates the observed recovery curve.
-const PUNCH_DECAY_RATE = 5.0; // per second (e^(-5t); reaches ~1 % at t=0.9 s)
+// CS:GO Desert Eagle config
+export const DEAGLE_CONFIG: WeaponConfig = {
+  semiAuto:       true,
+  magazineSize:   7,
+  reserveAmmo:    35,
+  fireIntervalMs: 225,   // ~267 RPM theoretical max; semi-auto means click-limited
+  reloadTimeS:    2.2,
+  recoilCooldownS: 0.35,
+  punchPerShot:   [0.0, 0.12],  // large upward kick per shot, no yaw
+  modelKickPerShot: 0.18,
+};
 
-// ── AK47 class ────────────────────────────────────────────────────────────────
+// CS:GO MP7
+export const MP7_CONFIG: WeaponConfig = {
+  semiAuto:        false,
+  magazineSize:    25,
+  reserveAmmo:     100,
+  fireIntervalMs:  75,     // 800 RPM
+  reloadTimeS:     3.13,
+  recoilCooldownS: 0.3,
+  punchPerShot:    [0.0, 0.04],
+  modelKickPerShot: 0.05,
+};
+
+// CS:GO P90
+export const P90_CONFIG: WeaponConfig = {
+  semiAuto:        false,
+  magazineSize:    50,
+  reserveAmmo:     100,
+  fireIntervalMs:  70,     // ~857 RPM
+  reloadTimeS:     3.3,
+  recoilCooldownS: 0.3,
+  punchPerShot:    [0.0, 0.035],
+  modelKickPerShot: 0.04,
+};
+
+// CS:GO AWP (ballista)
+export const BALLISTA_CONFIG: WeaponConfig = {
+  semiAuto:        true,
+  magazineSize:    10,
+  reserveAmmo:     30,
+  fireIntervalMs:  1400,   // bolt-action cycle
+  reloadTimeS:     3.67,
+  recoilCooldownS: 1.25,
+  punchPerShot:    [0.0, 0.22],
+  modelKickPerShot: 0.30,
+};
+
+// CS:GO M249 (lamg)
+export const LAMG_CONFIG: WeaponConfig = {
+  semiAuto:        false,
+  magazineSize:    100,
+  reserveAmmo:     200,
+  fireIntervalMs:  80,     // 750 RPM
+  reloadTimeS:     6.2,
+  recoilCooldownS: 0.45,
+  punchPerShot:    [0.0, 0.055],
+  modelKickPerShot: 0.06,
+};
+
+
+const PUNCH_DECAY_RATE = 5.0;
+
+// ── Weapon class ──────────────────────────────────────────────────────────────
 
 export class AK47 {
+  // Config (frozen at construction)
+  readonly semiAuto: boolean;
+  private readonly magazineSize: number;
+  private readonly reserveAmmo0: number;
+  private readonly fireIntervalMs: number;
+  private readonly reloadTimeS: number;
+  private readonly recoilCooldownS: number;
+  private readonly inspectTimeS: number;
+  private readonly punchPerShot: readonly [number, number] | null;
+  private readonly modelKickPerShot: number;
+
   // Magazine state
-  ammo    = MAGAZINE_SIZE;
-  reserve = RESERVE_AMMO;
+  ammo:    number;
+  reserve: number;
 
   // Reload state
   reloading   = false;
   reloadTimer = 0;
 
-  // Aim-punch (added to camera angles each frame for render + raycast)
-  punchPitch = 0; // radians, positive = up
-  punchYaw   = 0; // radians, positive = right
+  // Inspect state
+  inspecting   = false;
+  inspectTimer = 0;
 
-  // Visual weapon kick (separate from aim punch — drives the model animation)
-  modelKickPitch = 0; // radians
+  // Aim-punch
+  punchPitch = 0;
+  punchYaw   = 0;
+
+  // Visual weapon kick
+  modelKickPitch = 0;
   modelKickYaw   = 0;
 
-  // Reload animation offsets applied to the weapon group each frame
-  reloadOffsetY = 0;  // vertical drop (negative = down)
-  reloadOffsetZ = 0;  // push backward
-  reloadRollZ   = 0;  // roll/tilt (negative = CCW tilt, mag-side up)
+  // Reload animation offsets
+  reloadOffsetY = 0;
+  reloadOffsetZ = 0;
+  reloadRollZ   = 0;
 
   // Internal fire state
-  private fireTimer     = 0;   // ms remaining before next shot is allowed
-  private shotIndex     = 0;   // position in SPRAY_PATTERN (0 = first shot)
-  private recoveryTimer = 0;   // seconds since last shot
-  private _firing       = false;
+  private fireTimer      = 0;
+  private shotIndex      = 0;
+  private recoveryTimer  = 0;
+  private _firing        = false;
+  private triggerHeld    = false; // semi-auto lock: reset on releaseTrigger()
+
+  constructor(config: WeaponConfig = {}) {
+    this.semiAuto         = config.semiAuto         ?? false;
+    this.magazineSize     = config.magazineSize      ?? MAGAZINE_SIZE;
+    this.reserveAmmo0     = config.reserveAmmo       ?? RESERVE_AMMO;
+    this.fireIntervalMs   = config.fireIntervalMs    ?? FIRE_INTERVAL_MS;
+    this.reloadTimeS      = config.reloadTimeS       ?? RELOAD_TIME_S;
+    this.recoilCooldownS  = config.recoilCooldownS   ?? RECOIL_COOLDOWN_S;
+    this.inspectTimeS     = config.inspectTimeS      ?? INSPECT_TIME_S;
+    this.punchPerShot     = config.punchPerShot      ?? null;
+    this.modelKickPerShot = config.modelKickPerShot  ?? 0.08;
+
+    this.ammo    = this.magazineSize;
+    this.reserve = this.reserveAmmo0;
+  }
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
   get shotsFired(): number { return this.shotIndex; }
   get canFire():    boolean { return !this.reloading && this.ammo > 0 && this.fireTimer <= 0; }
   get isFiring():   boolean { return this._firing; }
+  get isInspecting(): boolean { return this.inspecting; }
 
-  /**
-   * Attempt to fire one round.
-   * Returns true if a shot was actually fired (caller should cast a ray).
-   */
   fire(): boolean {
+    // Semi-auto lock: only one shot per trigger press
+    if (this.semiAuto && this.triggerHeld) return false;
+
     if (!this.canFire) {
       if (!this.reloading && this.ammo === 0 && this.reserve > 0) this.reload();
       return false;
     }
 
-    // Apply spray pattern increment to aim punch
-    const idx = Math.min(this.shotIndex, SPRAY_PATTERN.length - 1);
-    this.punchYaw   += SPRAY_PATTERN[idx][0];
-    this.punchPitch += SPRAY_PATTERN[idx][1];
+    // Apply recoil
+    if (this.punchPerShot) {
+      this.punchYaw   += this.punchPerShot[0];
+      this.punchPitch += this.punchPerShot[1];
+      this.modelKickYaw = 0;
+    } else {
+      const idx = Math.min(this.shotIndex, SPRAY_PATTERN.length - 1);
+      this.punchYaw   += SPRAY_PATTERN[idx][0];
+      this.punchPitch += SPRAY_PATTERN[idx][1];
+      this.modelKickYaw += SPRAY_PATTERN[idx][0] * 1.5;
+    }
+    this.modelKickPitch += this.modelKickPerShot;
 
-    // Visual model kick (springs back to 0 in update())
-    this.modelKickPitch += 0.08;
-    this.modelKickYaw   += SPRAY_PATTERN[idx][0] * 1.5;
-
-    // Advance state
     this.ammo--;
     this.shotIndex    = Math.min(this.shotIndex + 1, SPRAY_PATTERN.length - 1);
-    this.fireTimer    = FIRE_INTERVAL_MS;
+    this.fireTimer    = this.fireIntervalMs;
     this.recoveryTimer = 0;
     this._firing      = true;
+    this.inspecting   = false;
+
+    if (this.semiAuto) this.triggerHeld = true;
 
     return true;
   }
 
   releaseTrigger(): void {
-    this._firing = false;
+    this._firing    = false;
+    this.triggerHeld = false;
   }
 
   reload(): void {
-    if (this.reloading || this.reserve <= 0 || this.ammo >= MAGAZINE_SIZE) return;
+    if (this.reloading || this.reserve <= 0 || this.ammo >= this.magazineSize) return;
     this.reloading   = true;
-    this.reloadTimer = RELOAD_TIME_S;
+    this.reloadTimer = this.reloadTimeS;
     this._firing     = false;
     this.shotIndex   = 0;
+    this.inspecting  = false;
   }
 
-  /**
-   * Call once per frame (dt in seconds).
-   * Handles fire-rate cooldown, reload, punch decay, spray-index reset.
-   */
+  inspect(): void {
+    if (this.reloading || this._firing || this.inspecting) return;
+    this.inspecting   = true;
+    this.inspectTimer = this.inspectTimeS;
+  }
+
   update(dt: number): void {
-    // Fire-rate timer
     if (this.fireTimer > 0) this.fireTimer -= dt * 1000;
 
-    // Reload countdown
+    if (this.inspecting) {
+      this.inspectTimer -= dt;
+      if (this.inspectTimer <= 0) this.inspecting = false;
+    }
+
     if (this.reloading) {
       this.reloadTimer -= dt;
       if (this.reloadTimer <= 0) {
-        const needed = MAGAZINE_SIZE - this.ammo;
+        const needed = this.magazineSize - this.ammo;
         const take   = Math.min(needed, this.reserve);
         this.ammo   += take;
         this.reserve -= take;
@@ -171,41 +283,32 @@ export class AK47 {
       }
     }
 
-    // Aim-punch exponential decay toward 0 (happens both while and after firing)
     const decay = Math.exp(-PUNCH_DECAY_RATE * dt);
     this.punchPitch *= decay;
     this.punchYaw   *= decay;
 
-    // Spray-index reset after cooldown
     if (!this._firing) {
       this.recoveryTimer += dt;
-      if (this.recoveryTimer >= RECOIL_COOLDOWN_S) {
+      if (this.recoveryTimer >= this.recoilCooldownS) {
         this.shotIndex = 0;
       }
     } else {
       this.recoveryTimer = 0;
     }
 
-    // Visual model kick springs back
     const kickDecay = Math.exp(-12 * dt);
     this.modelKickPitch *= kickDecay;
     this.modelKickYaw   *= kickDecay;
 
-    // Reload animation
     if (this.reloading) {
-      const t = 1 - this.reloadTimer / RELOAD_TIME_S; // 0 → 1 as reload progresses
-
-      // Smooth envelope: ramps up in first 30 %, holds, ramps down in last 30 %
+      const t = 1 - this.reloadTimer / this.reloadTimeS;
       const ss = (a: number, b: number, x: number) => {
         const c = Math.max(0, Math.min(1, (x - a) / (b - a)));
         return c * c * (3 - 2 * c);
       };
       const env = ss(0, 0.30, t) * (1 - ss(0.70, 1.0, t));
-
-      // Small upward bump at ~55 % = new magazine clicks in
       const clickT = Math.max(0, Math.min(1, (t - 0.50) / 0.10));
       const click  = Math.sin(clickT * Math.PI) * 0.03;
-
       this.reloadOffsetY = -0.17 * env + click;
       this.reloadOffsetZ =  0.06 * env;
       this.reloadRollZ   = -0.45 * env;
