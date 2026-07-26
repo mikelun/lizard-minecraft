@@ -202,7 +202,7 @@ const _shotNormalMat  = new THREE.Matrix3();
 const _shotInstMat    = new THREE.Matrix4();
 const _shotNormalVec  = new THREE.Vector3();
 
-function handleShot(origin: THREE.Vector3, dir: THREE.Vector3) {
+function handleShot(origin: THREE.Vector3, dir: THREE.Vector3): number {
   // 1. Block DDA raycast (fast, exact voxel normals)
   const blockHit = raycastWithNormal(
     origin, dir, 200,
@@ -254,13 +254,14 @@ function handleShot(origin: THREE.Vector3, dir: THREE.Vector3) {
     _shotNormalVec.applyMatrix3(_shotNormalMat).normalize();
 
     spawnBulletHole(scene, point, _shotNormalVec);
-    return; // mesh hit was closer than block hit
+    return meshHits[0].distance; // mesh hit was closer than block hit
   }
 
   // 3. Use block hit if no closer mesh
   if (blockPoint && blockNormal) {
     spawnBulletHole(scene, blockPoint, blockNormal);
   }
+  return blockDist; // Infinity if nothing was hit
 }
 
 // ── Crosshair bloom ───────────────────────────────────────────────────────────
@@ -348,15 +349,18 @@ controller.onShot = (origin, dirIn) => {
   }
 
   spawnTracer(origin, dir);
-  handleShot(origin, dir);
+  const wallDist = handleShot(origin, dir);
   shootBloom = Math.min(shootBloom + BLOOM_PER_SHOT, 70);
 
-  // Gun Game: report hit to server if we hit a remote player
+  // Gun Game: report hit to server only if the player is closer than any wall.
   if (net.connected) {
     const { id: hitId, zone, pos } = remotePlayers.raycast(origin, dir);
     if (hitId !== -1) {
-      net.sendHit(hitId, zone);
-      showDamageNumber(pos, zone);
+      const playerDist = origin.distanceTo(pos);
+      if (playerDist < wallDist) {
+        net.sendHit(hitId, zone);
+        showDamageNumber(pos, zone);
+      }
     }
   }
 };
@@ -774,6 +778,8 @@ net.onEvent = ev => {
     for (const p of ev.players) remotePlayers.add(p);
     hpBarWrap.style.display = 'block';
     setLocalHp(100);
+    // Force correct weapon immediately so there's no one-frame M16A1 flash.
+    controller.weaponIndex = GUN_TIER_SLOTS[net.localTier];
     updateTierBanner();
   } else if (ev.t === 'join') {
     remotePlayers.add({ id: ev.id, x: ev.x, y: ev.y, z: ev.z, yaw: 0, tier: ev.tier });
@@ -796,6 +802,8 @@ net.onEvent = ev => {
     updateTierBanner();
   } else if (ev.t === 'reset') {
     pushKillFeed('<span style="color:#aaa">— New round —</span>');
+    net.localTier = 0;
+    controller.weaponIndex = GUN_TIER_SLOTS[0];
     exitDeathState();
     updateTierBanner();
   } else if (ev.t === 'respawn') {
