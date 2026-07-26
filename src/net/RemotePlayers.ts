@@ -18,13 +18,17 @@ const TIER_GUNS = [
 
 const HITBOX_HALF = new THREE.Vector3(0.3, 0.9, 0.3);
 
-// CS:GO cl_interp equivalent — render remote players this many seconds behind
-// the most recently received snapshot. At ~62 Hz ticks (16 ms), 50 ms gives us
-// ~3 ticks of buffer, enough to smooth over any single-packet jitter.
-const INTERP_DELAY = 0.05;
+// Render remote players this many seconds behind the latest received snapshot.
+// 2 ticks at 62 Hz = 32 ms — matches CS:GO's default cl_interp_ratio 2.
+const INTERP_DELAY  = 0.032;
+// Allow up to this multiplier past the interpolation window before clamping.
+// DarkPlaces calls this "lerpexcess" — it hides single dropped packets.
+const LERP_EXCESS   = 0.15;
 
 interface Snapshot {
   x: number; y: number; z: number; yaw: number; t: number;
+  // Velocity derived from previous snapshot (units/s). Used for extrapolation.
+  vx: number; vy: number; vz: number;
 }
 
 interface Entry {
@@ -58,7 +62,7 @@ export class RemotePlayers {
       steve,
       data:  { ...p },
       box:   new THREE.Box3(),
-      snaps: [{ x: p.x, y: p.y, z: p.z, yaw: 0, t }],
+      snaps: [{ x: p.x, y: p.y, z: p.z, yaw: 0, t, vx: 0, vy: 0, vz: 0 }],
     });
   }
 
@@ -77,7 +81,7 @@ export class RemotePlayers {
     e.data.x = x; e.data.y = y; e.data.z = z;
     // Clear stale snaps so we don't interpolate through the old death position.
     const t = performance.now() / 1000;
-    e.snaps = [{ x, y, z, yaw: e.data.yaw, t }];
+    e.snaps = [{ x, y, z, yaw: e.data.yaw, t, vx: 0, vy: 0, vz: 0 }];
   }
 
   /** Apply ~62 Hz position + tier updates from binary tick. */
@@ -92,8 +96,15 @@ export class RemotePlayers {
       e.data.z   = p.z;
       e.data.yaw = p.yaw;
 
+      // Compute velocity from the previous snapshot for extrapolation.
+      const prev = e.snaps[e.snaps.length - 1];
+      const dt   = t - prev.t;
+      const vx = dt > 0 ? (p.x - prev.x) / dt : prev.vx;
+      const vy = dt > 0 ? (p.y - prev.y) / dt : prev.vy;
+      const vz = dt > 0 ? (p.z - prev.z) / dt : prev.vz;
+
       // Push snapshot and keep a rolling 128-frame (~2 s) window.
-      e.snaps.push({ x: p.x, y: p.y, z: p.z, yaw: p.yaw, t });
+      e.snaps.push({ x: p.x, y: p.y, z: p.z, yaw: p.yaw, t, vx, vy, vz });
       if (e.snaps.length > 128) e.snaps.shift();
 
       if (p.tier !== e.data.tier) {
@@ -116,30 +127,44 @@ export class RemotePlayers {
 
       const snaps = e.snaps;
       if (snaps.length >= 2) {
-        // Find the pair of snapshots that bracket renderTime (walk backward from end).
-        let i0 = 0;
-        for (let i = snaps.length - 2; i >= 0; i--) {
-          if (snaps[i].t <= renderTime) { i0 = i; break; }
-        }
-        const s0 = snaps[i0];
-        const s1 = snaps[Math.min(i0 + 1, snaps.length - 1)];
+        const latest = snaps[snaps.length - 1];
 
-        if (s1.t > s0.t) {
-          const alpha = Math.max(0, Math.min(1, (renderTime - s0.t) / (s1.t - s0.t)));
-          x = s0.x + (s1.x - s0.x) * alpha;
-          y = s0.y + (s1.y - s0.y) * alpha;
-          z = s0.z + (s1.z - s0.z) * alpha;
-          // Yaw: always take the shortest arc to avoid 360° wrapping artefacts.
-          let dy = s1.yaw - s0.yaw;
-          while (dy >  Math.PI) dy -= 2 * Math.PI;
-          while (dy < -Math.PI) dy += 2 * Math.PI;
-          yaw = s0.yaw + dy * alpha;
+        if (renderTime >= latest.t) {
+          // Extrapolation zone — renderTime is past the newest snapshot.
+          // Use velocity from the latest snapshot to project forward (Quake 3 style).
+          const ahead = renderTime - latest.t;
+          x = latest.x + latest.vx * ahead;
+          y = latest.y + latest.vy * ahead;
+          z = latest.z + latest.vz * ahead;
+          yaw = latest.yaw;
+        } else {
+          // Interpolation zone — find the pair that brackets renderTime.
+          let i0 = snaps.length - 2;
+          for (let i = snaps.length - 2; i >= 0; i--) {
+            if (snaps[i].t <= renderTime) { i0 = i; break; }
+          }
+          const s0 = snaps[i0];
+          const s1 = snaps[i0 + 1];
+
+          if (s1 && s1.t > s0.t) {
+            // DarkPlaces lerpexcess: allow slight over-shoot to bridge a dropped packet.
+            const raw = (renderTime - s0.t) / (s1.t - s0.t);
+            const alpha = Math.max(0, Math.min(1 + LERP_EXCESS, raw));
+            x = s0.x + (s1.x - s0.x) * alpha;
+            y = s0.y + (s1.y - s0.y) * alpha;
+            z = s0.z + (s1.z - s0.z) * alpha;
+            // Shortest-arc yaw lerp (Quake 3's LerpAngle).
+            let dy = s1.yaw - s0.yaw;
+            while (dy >  Math.PI) dy -= 2 * Math.PI;
+            while (dy < -Math.PI) dy += 2 * Math.PI;
+            yaw = s0.yaw + dy * alpha;
+          }
         }
 
         // Detect walking from the two most recent snaps regardless of render lag.
-        const last = snaps[snaps.length - 1];
-        const prev = snaps[snaps.length - 2];
-        const moved = Math.hypot(last.x - prev.x, last.z - prev.z);
+        const last2 = snaps[snaps.length - 1];
+        const prev2 = snaps[snaps.length - 2];
+        const moved = Math.hypot(last2.x - prev2.x, last2.z - prev2.z);
         walking = moved > 0.006; // ~0.4 m/s threshold at 62 Hz
       }
 
