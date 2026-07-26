@@ -449,7 +449,7 @@ async function loadPointBlankGun(
 
     const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData as any, tex as THREE.Texture, 1 / 16);
 
-    for (const name of [...hideBones, "rightarm", "leftarm"]) {
+    for (const name of [...hideBones, "leftarm"]) {
       if (gunBones[name]) gunBones[name].visible = false;
     }
     for (const grp of Object.values(gunBones)) {
@@ -497,7 +497,7 @@ async function loadPointBlankGun(
     ]);
 
     const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData, tex, 1 / 16);
-    for (const name of ["_cb_suppressor", "_cb_scope", "muzzleflash", "bullet", "scope", "rightarm", "leftarm"]) {
+    for (const name of ["_cb_suppressor", "_cb_scope", "muzzleflash", "bullet", "scope", "leftarm"]) {
       if (gunBones[name]) gunBones[name].visible = false;
     }
     for (const grp of Object.values(gunBones)) {
@@ -659,9 +659,68 @@ function updateTierBanner() {
   tierBanner.textContent = `Tier ${net.localTier + 1}/6 — ${WEAPON_NAMES[slot]}  →  ${next}`;
 }
 
+// ── HP bar ─────────────────────────────────────────────────────────────────
+const hpBarWrap = document.createElement('div');
+hpBarWrap.style.cssText = `
+  position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+  width:200px;font-family:monospace;pointer-events:none;display:none;
+`;
+hpBarWrap.innerHTML = `
+  <div style="color:#fff;font-size:13px;text-align:center;text-shadow:0 1px 3px #000;margin-bottom:3px">
+    HP <span id="hp-value">100</span>
+  </div>
+  <div style="background:rgba(0,0,0,0.5);height:6px;border-radius:3px;overflow:hidden">
+    <div id="hp-fill" style="background:#4f4;height:100%;width:100%;transition:width .1s"></div>
+  </div>
+`;
+document.getElementById('app')!.appendChild(hpBarWrap);
+const hpValueEl = hpBarWrap.querySelector('#hp-value') as HTMLElement;
+const hpFillEl  = hpBarWrap.querySelector('#hp-fill')  as HTMLElement;
+let _localHp = 100;
+function setLocalHp(hp: number) {
+  _localHp = hp;
+  hpValueEl.textContent = String(hp);
+  hpFillEl.style.width  = hp + '%';
+  hpFillEl.style.background = hp > 50 ? '#4f4' : hp > 25 ? '#fa4' : '#f44';
+}
+
+// ── Death screen ───────────────────────────────────────────────────────────
+const deathScreen = document.createElement('div');
+deathScreen.style.cssText = `
+  position:fixed;inset:0;background:rgba(180,0,0,0.45);
+  display:none;flex-direction:column;align-items:center;justify-content:center;
+  pointer-events:none;z-index:200;
+`;
+deathScreen.innerHTML = `
+  <div style="color:#fff;font-size:72px;font-weight:bold;
+    text-shadow:0 3px 12px #000;letter-spacing:4px">YOU DIED</div>
+  <div id="respawn-cd" style="color:#fff;font-size:36px;margin-top:20px;
+    text-shadow:0 2px 8px #000"></div>
+`;
+document.getElementById('app')!.appendChild(deathScreen);
+const respawnCdEl = deathScreen.querySelector('#respawn-cd') as HTMLElement;
+let _isDead = false;
+let _respawnCountdown = 0;
+
+function enterDeathState() {
+  _isDead = true;
+  _respawnCountdown = 3;
+  setLocalHp(0);
+  deathScreen.style.display = 'flex';
+  respawnCdEl.textContent = 'Respawning in 3...';
+}
+function exitDeathState() {
+  _isDead = false;
+  _respawnCountdown = 0;
+  setLocalHp(100);
+  deathScreen.style.display = 'none';
+}
+
 net.onEvent = ev => {
   if (ev.t === 'welcome') {
     for (const p of ev.players) remotePlayers.add(p);
+    hpBarWrap.style.display = 'block';
+    setLocalHp(100);
     updateTierBanner();
   } else if (ev.t === 'join') {
     remotePlayers.add({ id: ev.id, x: ev.x, y: ev.y, z: ev.z, yaw: 0, tier: ev.tier });
@@ -672,20 +731,29 @@ net.onEvent = ev => {
     const victimLabel = ev.victim === net.localId ? '<span style="color:#f66">YOU</span>' : `#${ev.victim}`;
     pushKillFeed(`${killerLabel} ☠ ${victimLabel} <span style="color:#aaa">[${ev.weaponName}]</span>`);
     if (ev.killer === net.localId) updateTierBanner();
+    // Instantly hide the dead body
+    if (ev.victim === net.localId) {
+      enterDeathState();
+    } else {
+      remotePlayers.hidePlayer(ev.victim);
+    }
   } else if (ev.t === 'win') {
     const label = ev.id === net.localId ? 'YOU WIN! 🏆' : `Player #${ev.id} wins!`;
     pushKillFeed(`<span style="color:#ffe066;font-size:16px">${label}</span>`);
     updateTierBanner();
   } else if (ev.t === 'reset') {
     pushKillFeed('<span style="color:#aaa">— New round —</span>');
+    exitDeathState();
     updateTierBanner();
   } else if (ev.t === 'respawn') {
     if (ev.id === net.localId) {
+      exitDeathState();
       controller.physics.position.set(ev.x, ev.y, ev.z);
       controller.physics.smoothY = ev.y;
       controller.physics.velocity.set(0, 0, 0);
     } else {
       remotePlayers.respawn(ev.id, ev.x, ev.y, ev.z);
+      remotePlayers.showPlayer(ev.id);
     }
   }
 };
@@ -696,6 +764,10 @@ net.connect();
 
 // Position send throttle — 20 Hz
 let _netTimer = 0;
+
+// Walk bob state
+let _walkBobTime = 0;
+let _walkBobAmp  = 0;
 
 // ── FOV / scope state ─────────────────────────────────────────────────────────
 const BASE_FOV   = 75;
@@ -724,6 +796,13 @@ function tick(now: number) {
       controller.weapons[controller.weaponIndex].releaseTrigger();
       controller.weaponIndex = forcedSlot;
     }
+  }
+
+  // ── Respawn countdown ───────────────────────────────────────────────────
+  if (_isDead && _respawnCountdown > 0) {
+    _respawnCountdown -= dt;
+    const secs = Math.max(1, Math.ceil(_respawnCountdown));
+    respawnCdEl.textContent = `Respawning in ${secs}...`;
   }
 
   controller.update(dt);
@@ -756,10 +835,10 @@ function tick(now: number) {
   const ak = controller.ak47;
   const wIdx = controller.weaponIndex;
 
-  // Show only the active weapon container; hide viewmodel entirely when scoped
+  // Show only the active weapon container; hide viewmodel entirely when scoped or dead
   const scoped = scopeLvl > 0;
   for (let i = 0; i < gunSlots.length; i++) {
-    gunSlots[i].container.visible = i === wIdx && !scoped;
+    gunSlots[i].container.visible = i === wIdx && !scoped && !_isDead;
   }
 
   const activeSlot = gunSlots[wIdx];
@@ -810,13 +889,21 @@ function tick(now: number) {
     net.sendPosition(pp.x, pp.y, pp.z, controller.fpCamera.yaw);
   }
 
-  // Apply kick/sway to the active weapon's container on top of its idle_view-aligned
-  // base position/orientation. Kick/roll are small screen-space sway effects, applied
-  // as an extra rotation in the parent (camera) frame on top of the base orientation —
-  // i.e. composed as kick * base, not overwriting the base orientation outright.
+  // Walk bob — CS:GO style: Y does two cycles per stride, X does one.
+  {
+    const vel = controller.physics.velocity;
+    const hSpeed = Math.hypot(vel.x, vel.z);
+    const targetAmp = (controller.physics.grounded && hSpeed > 0.5) ? Math.min(hSpeed / 5, 1) : 0;
+    _walkBobAmp += (targetAmp - _walkBobAmp) * (1 - Math.exp(-8 * dt));
+    if (_walkBobAmp > 0.001) _walkBobTime += dt * Math.max(hSpeed, 1) * 5;
+  }
+  const _bobY = Math.sin(_walkBobTime * 2) * _walkBobAmp * 0.025;
+  const _bobX = Math.sin(_walkBobTime)     * _walkBobAmp * 0.012;
+
+  // Apply kick/sway + walk bob to the active weapon's container.
   activeSlot.container.position.set(
-    activeSlot.basePos.x,
-    activeSlot.basePos.y - ak.modelKickPitch * 0.3 + ak.reloadOffsetY,
+    activeSlot.basePos.x + _bobX,
+    activeSlot.basePos.y - ak.modelKickPitch * 0.3 + ak.reloadOffsetY + _bobY,
     activeSlot.basePos.z  + ak.modelKickPitch * 0.1 + ak.reloadOffsetZ,
   );
   kickQuaternion.setFromEuler(kickEuler.set(ak.modelKickPitch * 0.4, 0, ak.reloadRollZ));

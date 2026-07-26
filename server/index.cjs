@@ -142,7 +142,7 @@ class Room {
       });
     }
 
-    // Respawn victim after 1.5 s
+    // Respawn victim after 3 s (client shows 3-2-1 countdown)
     setTimeout(() => {
       if (!this.players.has(vic.id)) return;
       const spawn = randomSpawn();
@@ -150,7 +150,7 @@ class Room {
       vic.dead = false;
       vic.x    = spawn[0]; vic.y = spawn[1]; vic.z = spawn[2];
       this.broadcast({ t: 'respawn', id: vic.id, x: spawn[0], y: spawn[1], z: spawn[2] });
-    }, 1500);
+    }, 3000);
   }
 
   _reset() {
