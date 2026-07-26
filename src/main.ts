@@ -403,14 +403,16 @@ const loadTex = (url: string) => new Promise<THREE.Texture>((res, rej) => {
 
     const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData, gunTex, 1 / 16);
 
-    // Hide the placeholder hand cubes baked into righthand_pos/lefthand_pos
-    // themselves (not the whole bone — the real Steve arm meshes are parented
-    // to these same bones below, and hiding the bone would hide them too).
-    for (const name of ["righthand_pos", "lefthand_pos"]) {
-      const grp = gunBones[name];
-      if (!grp) continue;
-      for (const child of [...grp.children]) {
-        if (child instanceof THREE.Mesh) grp.remove(child);
+    // Hide the entire left-arm hierarchy (mag_and_lefthand → lefthand → lefthand_pos).
+    // For the right arm, remove only the placeholder cube mesh from righthand_pos
+    // (the bone itself stays so the gun follows the animation).
+    const leftRoot = gunBones["mag_and_lefthand"] ?? gunBones["lefthand_pos"];
+    if (leftRoot) leftRoot.traverse((c: THREE.Object3D) => { c.visible = false; });
+
+    const rhPos = gunBones["righthand_pos"];
+    if (rhPos) {
+      for (const child of [...rhPos.children]) {
+        if (child instanceof THREE.Mesh) rhPos.remove(child);
       }
     }
 
@@ -507,7 +509,8 @@ async function loadPointBlankGun(
     const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData as any, tex as THREE.Texture, 1 / 16);
 
     for (const name of [...hideBones, "leftarm"]) {
-      if (gunBones[name]) gunBones[name].visible = false;
+      const grp = gunBones[name];
+      if (grp) grp.traverse((c: THREE.Object3D) => { c.visible = false; });
     }
     for (const grp of Object.values(gunBones)) {
       grp.userData.basePos = [grp.position.x, grp.position.y, grp.position.z];
@@ -555,7 +558,8 @@ async function loadPointBlankGun(
 
     const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData, tex, 1 / 16);
     for (const name of ["_cb_suppressor", "_cb_scope", "muzzleflash", "bullet", "scope", "leftarm"]) {
-      if (gunBones[name]) gunBones[name].visible = false;
+      const grp = gunBones[name];
+      if (grp) grp.traverse((c: THREE.Object3D) => { c.visible = false; });
     }
     for (const grp of Object.values(gunBones)) {
       grp.userData.basePos = [grp.position.x, grp.position.y, grp.position.z];
