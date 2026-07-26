@@ -270,6 +270,56 @@ let currentXhGap = 3;       // smoothed crosshair gap (px), starts at resting si
 const BLOOM_PER_SHOT = 13;  // px per shot
 const BLOOM_DECAY    = 8.0; // exponential decay rate (per second)
 
+// Damage tables (mirror of server values, used for client-side display only)
+const _GUN_TIERS    = [1, 2, 3, 0, 5, 4];
+const _WEAPON_DMG   = [35, 50, 25, 20, 100, 15];
+const _ZONE_MULT    = [0.75, 1.0, 4.0];
+
+function showDamageNumber(worldPos: THREE.Vector3, zone: number) {
+  const dmg = Math.round((_WEAPON_DMG[_GUN_TIERS[net.localTier] ?? 0] ?? 25) * (_ZONE_MULT[zone] ?? 1));
+  const ndc = worldPos.clone().project(controller.fpCamera.camera);
+  if (ndc.z > 1) return; // behind camera
+  const sx = (ndc.x + 1) / 2 * window.innerWidth;
+  const sy = (-ndc.y + 1) / 2 * window.innerHeight;
+
+  const el = document.createElement('div');
+  el.textContent = `-${dmg}`;
+  const isHead = zone === 2;
+  el.style.cssText = [
+    'position:fixed',
+    `left:${sx}px`,
+    `top:${sy}px`,
+    `color:${isHead ? '#ff3333' : zone === 0 ? '#aaaaaa' : '#ffdd00'}`,
+    `font-size:${isHead ? '26px' : '18px'}`,
+    'font-weight:bold',
+    'font-family:monospace',
+    'text-shadow:0 0 4px #000,1px 1px 2px #000',
+    'pointer-events:none',
+    'transform:translate(-50%,-50%)',
+    'z-index:9000',
+    'user-select:none',
+  ].join(';');
+  if (isHead) {
+    const hs = document.createElement('div');
+    hs.textContent = 'HEADSHOT';
+    hs.style.cssText = 'font-size:11px;letter-spacing:2px;color:#ff7777;text-align:center';
+    el.appendChild(hs);
+  }
+  document.body.appendChild(el);
+
+  let t = 0;
+  const DURATION = 0.9;
+  const tick = (dt2: number) => {
+    t += dt2;
+    const p = Math.min(t / DURATION, 1);
+    el.style.transform = `translate(-50%, calc(-50% - ${p * 55}px))`;
+    el.style.opacity = String(1 - p * p);
+    if (p < 1) requestAnimationFrame(() => tick(1 / 60));
+    else el.remove();
+  };
+  requestAnimationFrame(() => tick(1 / 60));
+}
+
 // Wire controller shot callback → spread → tracer + bullet hole + crosshair bloom
 const MAX_SPREAD_RAD = 4 * Math.PI / 180; // 4° cone at maximum bloom
 controller.onShot = (origin, dirIn) => {
@@ -303,8 +353,11 @@ controller.onShot = (origin, dirIn) => {
 
   // Gun Game: report hit to server if we hit a remote player
   if (net.connected) {
-    const { id: hitId, zone } = remotePlayers.raycast(origin, dir);
-    if (hitId !== -1) net.sendHit(hitId, zone);
+    const { id: hitId, zone, pos } = remotePlayers.raycast(origin, dir);
+    if (hitId !== -1) {
+      net.sendHit(hitId, zone);
+      showDamageNumber(pos, zone);
+    }
   }
 };
 
@@ -766,8 +819,6 @@ net.connect();
 let _netTimer = 0;
 
 // Walk bob state
-let _walkBobTime = 0;
-let _walkBobAmp  = 0;
 
 // ── FOV / scope state ─────────────────────────────────────────────────────────
 const BASE_FOV   = 75;
@@ -890,20 +941,10 @@ function tick(now: number) {
   }
 
   // Walk bob — CS:GO style: Y does two cycles per stride, X does one.
-  {
-    const vel = controller.physics.velocity;
-    const hSpeed = Math.hypot(vel.x, vel.z);
-    const targetAmp = (controller.physics.grounded && hSpeed > 0.5) ? Math.min(hSpeed / 5, 1) : 0;
-    _walkBobAmp += (targetAmp - _walkBobAmp) * (1 - Math.exp(-8 * dt));
-    if (_walkBobAmp > 0.001) _walkBobTime += dt * Math.max(hSpeed, 1) * 5;
-  }
-  const _bobY = Math.sin(_walkBobTime * 2) * _walkBobAmp * 0.025;
-  const _bobX = Math.sin(_walkBobTime)     * _walkBobAmp * 0.012;
-
-  // Apply kick/sway + walk bob to the active weapon's container.
+  // Apply kick/sway to the active weapon's container (no walk bob — gun stays static).
   activeSlot.container.position.set(
-    activeSlot.basePos.x + _bobX,
-    activeSlot.basePos.y - ak.modelKickPitch * 0.3 + ak.reloadOffsetY + _bobY,
+    activeSlot.basePos.x,
+    activeSlot.basePos.y - ak.modelKickPitch * 0.3 + ak.reloadOffsetY,
     activeSlot.basePos.z  + ak.modelKickPitch * 0.1 + ak.reloadOffsetZ,
   );
   kickQuaternion.setFromEuler(kickEuler.set(ak.modelKickPitch * 0.4, 0, ak.reloadRollZ));

@@ -154,12 +154,14 @@ export class RemotePlayers {
   }
 
   /**
-   * Returns { id, zone } for the closest remote player hit.
-   * zone: 0 = legs, 1 = body, 2 = head. Returns id=-1 on miss.
+   * Returns { id, zone, pos } for the closest remote player hit.
+   * zone: 0=legs, 1=body, 2=head. pos is the world-space intersection point.
+   * Returns id=-1 on miss.
    */
-  raycast(origin: THREE.Vector3, direction: THREE.Vector3): { id: number; zone: number } {
+  raycast(origin: THREE.Vector3, direction: THREE.Vector3): { id: number; zone: number; pos: THREE.Vector3 } {
     const ray = new THREE.Ray(origin, direction.clone().normalize());
     const hitPt = new THREE.Vector3();
+    const bestPt = new THREE.Vector3();
     let best = Infinity, bestId = -1, bestZone = 1;
 
     for (const [id, e] of this.map) {
@@ -169,13 +171,14 @@ export class RemotePlayers {
         if (dist < best) {
           best = dist;
           bestId = id;
+          bestPt.copy(hitPt);
           // Relative height within the box (0 = feet, 1 = top of head)
           const relY = (hitPt.y - e.box.min.y) / (e.box.max.y - e.box.min.y);
           bestZone = relY > 0.75 ? 2 : relY > 0.35 ? 1 : 0; // head / body / legs
         }
       }
     }
-    return { id: bestId, zone: bestZone };
+    return { id: bestId, zone: bestZone, pos: bestPt };
   }
 
   /** Hide a player's Steve immediately (called when they die). */
