@@ -1,16 +1,11 @@
-// WebSocket client for the Gun Game server.
-// Binary protocol (client → server):
-//   0x01  position: [x:f32le y:f32le z:f32le yaw:f32le]  17 bytes
-//   0x02  hit:      [targetId:u8]                          2 bytes
-//
-// Binary protocol (server → client):
-//   0x01  tick: [count:u8, per-player: id(1)+x(4)+y(4)+z(4)+yaw(4)+tier(1) = 18 bytes]
-//
-// JSON events (server → client, text frames):
-//   welcome | join | leave | kill | win | reset | respawn
+// Multiplayer client — built on Colyseus.js.
+// Server state changes push snapshots into onSnapshot; infrequent game events
+// (kill, respawn, etc.) arrive via onEvent.
+
+import { Client as ColyseusClient, Room } from 'colyseus.js';
 
 export interface RemotePlayerData {
-  id:   number;
+  id:   string; // Colyseus sessionId
   x:    number;
   y:    number;
   z:    number;
@@ -19,100 +14,101 @@ export interface RemotePlayerData {
 }
 
 export type GameEvent =
-  | { t: 'welcome'; id: number; spawn: [number,number,number]; tier: number; players: RemotePlayerData[] }
-  | { t: 'join';    id: number; x: number; y: number; z: number; tier: number }
-  | { t: 'leave';   id: number }
-  | { t: 'kill';    killer: number; victim: number; weapon: number; weaponName: string; killerTier: number }
-  | { t: 'win';     id: number }
+  | { t: 'welcome'; id: string; spawn: [number,number,number]; tier: number; players: RemotePlayerData[] }
+  | { t: 'join';    id: string; x: number; y: number; z: number; tier: number }
+  | { t: 'leave';   id: string }
+  | { t: 'kill';    killer: string; victim: string; weapon: number; weaponName: string; killerTier: number }
+  | { t: 'win';     id: string }
   | { t: 'reset' }
-  | { t: 'respawn'; id: number; x: number; y: number; z: number };
+  | { t: 'respawn'; id: string; x: number; y: number; z: number };
 
 export class GameClient {
-  private ws:         WebSocket | null = null;
-  private _posBuf  = new ArrayBuffer(17);
-  private _posView: DataView;
-  private _hitBuf  = new ArrayBuffer(3); // [0x02, targetId, zone]
-  private _hitView: DataView;
+  private _client: ColyseusClient;
+  private _room:   Room | null = null;
 
-  localId   = -1;
-  localTier =  0;
+  localId   = '';
+  localTier = 0;
   connected = false;
 
-  onTick:  (players: RemotePlayerData[]) => void = () => {};
-  onEvent: (event: GameEvent) => void            = () => {};
+  // Called with an array of 1 player whenever that player's schema state changes.
+  onSnapshot: (players: RemotePlayerData[]) => void = () => {};
+  onEvent:    (event: GameEvent) => void            = () => {};
 
-  constructor(private readonly url: string) {
-    this._posView = new DataView(this._posBuf);
-    this._hitView = new DataView(this._hitBuf);
-    this._hitView.setUint8(0, 0x02);
+  constructor(url: string) {
+    this._client = new ColyseusClient(url);
   }
 
   connect() {
-    const ws = new WebSocket(this.url);
-    ws.binaryType = 'arraybuffer';
-    this.ws = ws;
-
-    ws.onopen = () => {
+    this._client.joinOrCreate('game').then((room: Room) => {
+      this._room    = room;
+      this.localId  = room.sessionId;
       this.connected = true;
-      console.log('[GameClient] connected');
-    };
+      console.log('[GameClient] connected, sessionId:', room.sessionId);
 
-    ws.onmessage = (e: MessageEvent) => {
-      if (e.data instanceof ArrayBuffer) {
-        this._parseTick(e.data);
-      } else {
-        const ev = JSON.parse(e.data as string) as GameEvent;
-        if (ev.t === 'welcome') {
-          this.localId   = ev.id;
-          this.localTier = ev.tier;
-        } else if (ev.t === 'kill' && ev.killer === this.localId) {
-          this.localTier = ev.killerTier;
-        } else if (ev.t === 'reset') {
-          this.localTier = 0;
-        }
-        this.onEvent(ev);
-      }
-    };
+      // ── Position snapshots via schema onChange ──────────────────────
+      room.state.players.onAdd((player: any, sessionId: string) => {
+        if (sessionId === this.localId) return; // skip self
 
-    ws.onclose  = () => { this.connected = false; console.log('[GameClient] disconnected'); };
-    ws.onerror  = () => { this.connected = false; };
-  }
-
-  private _parseTick(buf: ArrayBuffer) {
-    const v = new DataView(buf);
-    if (v.getUint8(0) !== 0x01) return;
-    const count = v.getUint8(1);
-    const out: RemotePlayerData[] = [];
-    let off = 2;
-    for (let i = 0; i < count; i++, off += 18) {
-      const id = v.getUint8(off);
-      if (id === this.localId) continue; // skip self
-      out.push({
-        id,
-        x:    v.getFloat32(off + 1,  true),
-        y:    v.getFloat32(off + 5,  true),
-        z:    v.getFloat32(off + 9,  true),
-        yaw:  v.getFloat32(off + 13, true),
-        tier: v.getUint8(off + 17),
+        // Fire a snapshot whenever this player's properties are patched.
+        player.onChange(() => {
+          this.onSnapshot([{
+            id:   sessionId,
+            x:    player.x,
+            y:    player.y,
+            z:    player.z,
+            yaw:  player.yaw,
+            tier: player.tier,
+          }]);
+        });
       });
-    }
-    if (out.length) this.onTick(out);
+
+      // ── Game events ─────────────────────────────────────────────────
+      room.onMessage('welcome', (msg: any) => {
+        this.localTier = msg.tier ?? 0;
+        this.onEvent({ t: 'welcome', id: msg.id, spawn: msg.spawn, tier: msg.tier, players: msg.players ?? [] });
+      });
+
+      room.onMessage('join', (msg: any) => {
+        this.onEvent({ t: 'join', id: msg.id, x: msg.x, y: msg.y, z: msg.z, tier: msg.tier });
+      });
+
+      room.onMessage('kill', (msg: any) => {
+        if (msg.killer === this.localId) this.localTier = msg.killerTier;
+        this.onEvent({ t: 'kill', killer: msg.killer, victim: msg.victim, weapon: msg.weapon, weaponName: msg.weaponName, killerTier: msg.killerTier });
+      });
+
+      room.onMessage('win', (msg: any) => {
+        this.onEvent({ t: 'win', id: msg.id });
+      });
+
+      room.onMessage('reset', () => {
+        this.localTier = 0;
+        this.onEvent({ t: 'reset' });
+      });
+
+      room.onMessage('respawn', (msg: any) => {
+        this.onEvent({ t: 'respawn', id: msg.id, x: msg.x, y: msg.y, z: msg.z });
+      });
+
+      room.onLeave(() => {
+        this.connected = false;
+        console.log('[GameClient] disconnected');
+      });
+
+    }).catch((err: Error) => {
+      console.error('[GameClient] connection failed:', err.message);
+      // Retry after 3 s
+      setTimeout(() => this.connect(), 3000);
+    });
   }
 
   sendPosition(x: number, y: number, z: number, yaw: number) {
-    if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this._posView.setUint8(0,    0x01);
-    this._posView.setFloat32(1,  x,   true);
-    this._posView.setFloat32(5,  y,   true);
-    this._posView.setFloat32(9,  z,   true);
-    this._posView.setFloat32(13, yaw, true);
-    this.ws.send(this._posBuf);
+    if (!this._room || !this.connected) return;
+    this._room.send('position', { x, y, z, yaw });
   }
 
-  sendHit(targetId: number, zone: number) {
-    if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this._hitView.setUint8(1, targetId);
-    this._hitView.setUint8(2, zone);
-    this.ws.send(this._hitBuf);
+  sendHit(targetId: string, zone: number) {
+    if (!this._room || !this.connected) return;
+    this._room.send('hit', { targetId, zone });
   }
 }

@@ -355,7 +355,7 @@ controller.onShot = (origin, dirIn) => {
   // Gun Game: report hit to server only if the player is closer than any wall.
   if (net.connected) {
     const { id: hitId, zone, pos } = remotePlayers.raycast(origin, dir);
-    if (hitId !== -1) {
+    if (hitId !== '') {
       const playerDist = origin.distanceTo(pos);
       if (playerDist < wallDist) {
         net.sendHit(hitId, zone);
@@ -711,7 +711,7 @@ tierBanner.style.cssText = `
 document.getElementById('app')!.appendChild(tierBanner);
 
 function updateTierBanner() {
-  if (!net.connected || net.localId === -1) { tierBanner.style.display = 'none'; return; }
+  if (!net.connected || net.localId === '') { tierBanner.style.display = 'none'; return; }
   const slot = GUN_TIER_SLOTS[net.localTier];
   const next = net.localTier + 1 < GUN_TIER_SLOTS.length
     ? WEAPON_NAMES[GUN_TIER_SLOTS[net.localTier + 1]]
@@ -790,8 +790,9 @@ net.onEvent = ev => {
   } else if (ev.t === 'leave') {
     remotePlayers.remove(ev.id);
   } else if (ev.t === 'kill') {
-    const killerLabel = ev.killer === net.localId ? '<span style="color:#4fc">YOU</span>' : `#${ev.killer}`;
-    const victimLabel = ev.victim === net.localId ? '<span style="color:#f66">YOU</span>' : `#${ev.victim}`;
+    const short = (id: string) => id.slice(0, 4).toUpperCase();
+    const killerLabel = ev.killer === net.localId ? '<span style="color:#4fc">YOU</span>' : `#${short(ev.killer)}`;
+    const victimLabel = ev.victim === net.localId ? '<span style="color:#f66">YOU</span>' : `#${short(ev.victim)}`;
     pushKillFeed(`${killerLabel} ☠ ${victimLabel} <span style="color:#aaa">[${ev.weaponName}]</span>`);
     if (ev.killer === net.localId) updateTierBanner();
     // Instantly hide the dead body
@@ -801,7 +802,7 @@ net.onEvent = ev => {
       remotePlayers.hidePlayer(ev.victim);
     }
   } else if (ev.t === 'win') {
-    const label = ev.id === net.localId ? 'YOU WIN! 🏆' : `Player #${ev.id} wins!`;
+    const label = ev.id === net.localId ? 'YOU WIN! 🏆' : `Player #${ev.id.slice(0,4).toUpperCase()} wins!`;
     pushKillFeed(`<span style="color:#ffe066;font-size:16px">${label}</span>`);
     updateTierBanner();
   } else if (ev.t === 'reset') {
@@ -823,7 +824,7 @@ net.onEvent = ev => {
   }
 };
 
-net.onTick = players => remotePlayers.applyTick(players);
+net.onSnapshot = players => remotePlayers.applyTick(players);
 
 net.connect();
 
@@ -853,7 +854,7 @@ function tick(now: number) {
   hud.setSelected(controller.selectedIndex);
 
   // ── Gun Game: force weapon slot to current tier ────────────────────────────
-  if (net.connected && net.localId !== -1) {
+  if (net.connected && net.localId !== '') {
     const forcedSlot = GUN_TIER_SLOTS[net.localTier];
     if (controller.weaponIndex !== forcedSlot) {
       controller.weapons[controller.weaponIndex].releaseTrigger();

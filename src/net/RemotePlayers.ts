@@ -39,7 +39,7 @@ interface Entry {
 }
 
 export class RemotePlayers {
-  private map = new Map<number, Entry>();
+  private map = new Map<string, Entry>();
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -50,7 +50,7 @@ export class RemotePlayers {
     steve.aiming = true;
     steve.root.position.set(p.x, p.y, p.z);
     this.scene.add(steve.root);
-    if (p.id % 2 === 0) {
+    if (p.id.charCodeAt(0) % 2 === 0) {
       steve.equipSwatArmor();
     } else {
       steve.equipArmor('/marbled/military_armor.geo.json', '/marbled/desert_military_armor.png');
@@ -67,7 +67,7 @@ export class RemotePlayers {
   }
 
   /** Called when a player leaves. */
-  remove(id: number) {
+  remove(id: string) {
     const e = this.map.get(id);
     if (!e) return;
     this.scene.remove(e.steve.root);
@@ -75,7 +75,7 @@ export class RemotePlayers {
   }
 
   /** Called when victim respawns — snap to new position and clear the snap buffer. */
-  respawn(id: number, x: number, y: number, z: number) {
+  respawn(id: string, x: number, y: number, z: number) {
     const e = this.map.get(id);
     if (!e) return;
     e.data.x = x; e.data.y = y; e.data.z = z;
@@ -181,13 +181,13 @@ export class RemotePlayers {
   /**
    * Returns { id, zone, pos } for the closest remote player hit.
    * zone: 0=legs, 1=body, 2=head. pos is the world-space intersection point.
-   * Returns id=-1 on miss.
+   * Returns id='' on miss.
    */
-  raycast(origin: THREE.Vector3, direction: THREE.Vector3): { id: number; zone: number; pos: THREE.Vector3 } {
+  raycast(origin: THREE.Vector3, direction: THREE.Vector3): { id: string; zone: number; pos: THREE.Vector3 } {
     const ray = new THREE.Ray(origin, direction.clone().normalize());
     const hitPt = new THREE.Vector3();
     const bestPt = new THREE.Vector3();
-    let best = Infinity, bestId = -1, bestZone = 1;
+    let best = Infinity, bestId = '', bestZone = 1;
 
     for (const [id, e] of this.map) {
       const result = ray.intersectBox(e.box, hitPt);
@@ -207,13 +207,13 @@ export class RemotePlayers {
   }
 
   /** Hide a player's Steve immediately (called when they die). */
-  hidePlayer(id: number) {
+  hidePlayer(id: string) {
     const e = this.map.get(id);
     if (e) e.steve.root.visible = false;
   }
 
   /** Show a player's Steve again (called when they respawn). */
-  showPlayer(id: number) {
+  showPlayer(id: string) {
     const e = this.map.get(id);
     if (e) e.steve.root.visible = true;
   }
