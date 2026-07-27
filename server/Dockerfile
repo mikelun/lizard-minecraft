@@ -10,5 +10,6 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/server/dist/ ./server/dist/
+COPY server/package.json ./server/package.json
 EXPOSE 9001
 CMD ["node", "server/dist/index.js"]
