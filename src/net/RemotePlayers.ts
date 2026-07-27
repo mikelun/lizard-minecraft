@@ -16,7 +16,7 @@ const TIER_GUNS = [
   { geo: '/pointblank/models/ballista.geo.json',    tex: '/pointblank/textures/ballista.png',    scale: 0.20 },
 ];
 
-const HITBOX_HALF = new THREE.Vector3(0.3, 0.9, 0.3);
+const HITBOX_HALF = new THREE.Vector3(0.3, 1.0, 0.3);
 
 // Render remote players this many seconds behind the latest received snapshot.
 // 2 ticks at 62 Hz = 32 ms — matches CS:GO's default cl_interp_ratio 2.
@@ -199,7 +199,7 @@ export class RemotePlayers {
           bestPt.copy(hitPt);
           // Relative height within the box (0 = feet, 1 = top of head)
           const relY = (hitPt.y - e.box.min.y) / (e.box.max.y - e.box.min.y);
-          bestZone = relY > 0.75 ? 2 : relY > 0.35 ? 1 : 0; // head / body / legs
+          bestZone = relY > 0.75 ? 2 : relY > 0.375 ? 1 : 0; // head(>1.5m) / body / legs
         }
       }
     }
