@@ -321,32 +321,9 @@ function showDamageNumber(worldPos: THREE.Vector3, zone: number) {
   requestAnimationFrame(() => tick(1 / 60));
 }
 
-// Wire controller shot callback → spread → tracer + bullet hole + crosshair bloom
-const MAX_SPREAD_RAD = 4 * Math.PI / 180; // 4° cone at maximum bloom
+// Wire controller shot callback → tracer + bullet hole + crosshair bloom
 controller.onShot = (origin, dirIn) => {
-  // Scale spread angle by how open the crosshair is (gap=3 → 0°, gap=83 → 4°)
-  const spreadFrac  = Math.max(0, (currentXhGap - 3) / 80);
-  const spreadAngle = spreadFrac * MAX_SPREAD_RAD;
-
-  let dir = dirIn;
-  if (spreadAngle > 0.0001) {
-    // Uniform random point inside a cone: radius = sqrt(rand) so distribution
-    // is uniform over the disk (no clustering at center).
-    const r     = Math.sqrt(Math.random()) * spreadAngle;
-    const theta = Math.random() * Math.PI * 2;
-
-    // Build an orthonormal frame perpendicular to the shot direction.
-    const up    = Math.abs(dirIn.y) < 0.99
-      ? new THREE.Vector3(0, 1, 0)
-      : new THREE.Vector3(1, 0, 0);
-    const right  = new THREE.Vector3().crossVectors(dirIn, up).normalize();
-    const realUp = new THREE.Vector3().crossVectors(right, dirIn).normalize();
-
-    dir = dirIn.clone()
-      .addScaledVector(right,  Math.sin(r) * Math.cos(theta))
-      .addScaledVector(realUp, Math.sin(r) * Math.sin(theta))
-      .normalize();
-  }
+  const dir = dirIn; // no spread — bullets go exactly where the crosshair points
 
   spawnTracer(origin, dir);
   const wallDist = handleShot(origin, dir);
