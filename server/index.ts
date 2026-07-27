@@ -48,6 +48,16 @@ class GameRoom extends Room<GameState> {
     this.setState(new GameState());
     this.setPatchRate(TICK_MS);
 
+    // Broadcast JSON tick — client uses this instead of schema state (simpler, no rootSchema needed)
+    this.setSimulationInterval(() => {
+      if (this.clients.length < 2) return;
+      const positions: { id: string; x: number; y: number; z: number; yaw: number; tier: number }[] = [];
+      this.state.players.forEach((p, id) => {
+        positions.push({ id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, tier: p.tier });
+      });
+      this.broadcast('tick', positions);
+    }, TICK_MS);
+
     this.onMessage('position', (client: Client, msg: { x: number; y: number; z: number; yaw: number }) => {
       const p = this.state.players.get(client.sessionId);
       if (p && !p.dead) { p.x = msg.x; p.y = msg.y; p.z = msg.z; p.yaw = msg.yaw; }

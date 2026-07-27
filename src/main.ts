@@ -781,6 +781,10 @@ function exitDeathState() {
 net.onEvent = ev => {
   if (ev.t === 'welcome') {
     for (const p of ev.players) remotePlayers.add(p);
+    // Teleport to the server-assigned spawn so we share the same arena as everyone else.
+    controller.physics.position.set(ev.spawn[0], ev.spawn[1], ev.spawn[2]);
+    controller.physics.smoothY = ev.spawn[1];
+    controller.physics.velocity.set(0, 0, 0);
     hpBarWrap.style.display = 'block';
     setLocalHp(100);
     // Force correct weapon immediately so there's no one-frame M16A1 flash.

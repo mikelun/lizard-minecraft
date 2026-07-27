@@ -45,21 +45,10 @@ export class GameClient {
       this.connected = true;
       console.log('[GameClient] connected, sessionId:', room.sessionId);
 
-      // ── Position snapshots via schema onChange ──────────────────────
-      room.state.players.onAdd((player: any, sessionId: string) => {
-        if (sessionId === this.localId) return; // skip self
-
-        // Fire a snapshot whenever this player's properties are patched.
-        player.onChange(() => {
-          this.onSnapshot([{
-            id:   sessionId,
-            x:    player.x,
-            y:    player.y,
-            z:    player.z,
-            yaw:  player.yaw,
-            tier: player.tier,
-          }]);
-        });
+      // ── Position snapshots via JSON tick broadcast ──────────────────
+      room.onMessage('tick', (positions: Array<{ id: string; x: number; y: number; z: number; yaw: number; tier: number }>) => {
+        const others = positions.filter(p => p.id !== this.localId);
+        if (others.length > 0) this.onSnapshot(others);
       });
 
       // ── Game events ─────────────────────────────────────────────────
