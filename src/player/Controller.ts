@@ -287,17 +287,16 @@ export class PlayerController {
       if (fired) this.scopeLevel = 0; // AWP unscopes after each shot
       if (fired && this.onShot) {
         const eye = this.eyePosition();
-        // Bullet spread: random cone that grows with sustained fire and air time.
-        // Camera kick is purely visual; bullets scatter within the cone.
-        const airSpread     = this.physics.grounded ? 0 : 0.12;
-        const sustainSpread = Math.min(Math.abs(this.ak47.punchPitch) * 0.5, 0.07);
-        const inaccuracy    = sustainSpread + airSpread;
+        // Bullet travels where the crosshair is pointing — punch included.
+        // Spread scales with air time and sustained fire.
+        const airSpread  = this.physics.grounded ? 0 : 0.12;
+        const inaccuracy = Math.min(Math.abs(this.ak47.punchPitch) * 0.5, 0.07) + airSpread;
         const spreadPitch = (Math.random() * 2 - 1) * inaccuracy;
         const spreadYaw   = (Math.random() * 2 - 1) * inaccuracy;
         const dir = new THREE.Vector3(0, 0, -1)
           .applyEuler(new THREE.Euler(
-            this.fpCamera.pitch + spreadPitch,
-            this.fpCamera.yaw   + spreadYaw,
+            this.fpCamera.pitch + this.ak47.punchPitch + spreadPitch,
+            this.fpCamera.yaw   + this.ak47.punchYaw   + spreadYaw,
             0, "YXZ",
           ));
         this.onShot(eye, dir);
