@@ -403,11 +403,12 @@ const loadTex = (url: string) => new Promise<THREE.Texture>((res, rej) => {
 
     const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData, gunTex, 1 / 16);
 
-    // Hide the entire left-arm hierarchy (mag_and_lefthand → lefthand → lefthand_pos).
+    // Hide only the lefthand bone (placeholder cube), NOT mag_and_lefthand —
+    // the magazine lives under mag_and_lefthand → mag_and_bullet → magazine.
     // For the right arm, remove only the placeholder cube mesh from righthand_pos
     // (the bone itself stays so the gun follows the animation).
-    const leftRoot = gunBones["mag_and_lefthand"] ?? gunBones["lefthand_pos"];
-    if (leftRoot) leftRoot.traverse((c: THREE.Object3D) => { c.visible = false; });
+    const leftHand = gunBones["lefthand"] ?? gunBones["lefthand_pos"];
+    if (leftHand) leftHand.traverse((c: THREE.Object3D) => { c.visible = false; });
 
     const rhPos = gunBones["righthand_pos"];
     if (rhPos) {
