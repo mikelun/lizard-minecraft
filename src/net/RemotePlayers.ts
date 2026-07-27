@@ -16,7 +16,14 @@ const TIER_GUNS = [
   { geo: '/pointblank/models/ballista.geo.json',    tex: '/pointblank/textures/ballista.png',    scale: 0.20 },
 ];
 
-const HITBOX_HALF = new THREE.Vector3(0.3, 1.0, 0.3);
+// Hitbox dimensions. Height 2.1m covers the 2.0m Steve model plus ~6cm helmet inflate
+// on SWAT/military armor. Zone boundaries use absolute meters above feet so the math
+// stays legible as the hitbox dimensions change.
+const HITBOX_XZ = 0.3;   // half-width in X and Z
+const HITBOX_H  = 2.1;   // full height from feet
+
+const HEAD_ZONE = 1.4;   // headshot starts at 1.4m (generous — catches chin/neck)
+const BODY_ZONE = 0.75;  // body starts at 0.75m
 
 // Render remote players this many seconds behind the latest received snapshot.
 // 2 ticks at 62 Hz = 32 ms — matches CS:GO's default cl_interp_ratio 2.
@@ -173,8 +180,8 @@ export class RemotePlayers {
 
       // Update hitbox from the interpolated position.
       const c = e.steve.root.position;
-      e.box.min.set(c.x - HITBOX_HALF.x, c.y,                     c.z - HITBOX_HALF.z);
-      e.box.max.set(c.x + HITBOX_HALF.x, c.y + HITBOX_HALF.y * 2, c.z + HITBOX_HALF.z);
+      e.box.min.set(c.x - HITBOX_XZ, c.y,              c.z - HITBOX_XZ);
+      e.box.max.set(c.x + HITBOX_XZ, c.y + HITBOX_H,   c.z + HITBOX_XZ);
     }
   }
 
@@ -197,9 +204,8 @@ export class RemotePlayers {
           best = dist;
           bestId = id;
           bestPt.copy(hitPt);
-          // Relative height within the box (0 = feet, 1 = top of head)
-          const relY = (hitPt.y - e.box.min.y) / (e.box.max.y - e.box.min.y);
-          bestZone = relY > 0.75 ? 2 : relY > 0.375 ? 1 : 0; // head(>1.5m) / body / legs
+          const absY = hitPt.y - e.box.min.y; // meters above feet
+          bestZone = absY > HEAD_ZONE ? 2 : absY > BODY_ZONE ? 1 : 0;
         }
       }
     }
