@@ -335,8 +335,25 @@ controller.onShot = (origin, dirIn) => {
     if (hitId !== '') {
       const playerDist = origin.distanceTo(pos);
       if (playerDist < wallDist) {
-        net.sendHit(hitId, zone);
         showDamageNumber(pos, zone);
+        if (hitId === DUMMY_ID) {
+          if (!dummyDead) {
+            const slot = _GUN_TIERS[net.localTier] ?? 0;
+            const dmg  = Math.round((_WEAPON_DMG[slot] ?? 25) * (_ZONE_MULT[zone] ?? 1));
+            dummyHp = Math.max(0, dummyHp - dmg);
+            if (dummyHp <= 0) {
+              dummyDead = true;
+              remotePlayers.hidePlayer(DUMMY_ID);
+              setTimeout(() => {
+                dummyHp   = 100;
+                dummyDead = false;
+                remotePlayers.showPlayer(DUMMY_ID);
+              }, 3000);
+            }
+          }
+        } else {
+          net.sendHit(hitId, zone);
+        }
       }
     }
   }
@@ -660,6 +677,12 @@ const WEAPON_NAMES   = ['M16A1', 'Deagle', 'MP7', 'P90', 'Ballista', 'LAMG'];
 const _wsUrl = import.meta.env.VITE_WS_URL ?? 'ws://localhost:9001';
 const net           = new GameClient(_wsUrl);
 const remotePlayers = new RemotePlayers(scene);
+
+// ── Training dummy ────────────────────────────────────────────────────────────
+const DUMMY_ID = '__dummy__';
+let dummyHp   = 100;
+let dummyDead = false;
+remotePlayers.add({ id: DUMMY_ID, x: -14, y: 5, z: 36, yaw: Math.PI, tier: 0 });
 
 // ── Kill feed DOM element ──────────────────────────────────────────────────
 const killFeedEl = document.createElement('div');
