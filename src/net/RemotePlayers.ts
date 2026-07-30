@@ -26,11 +26,15 @@ const HEAD_ZONE = 1.4;   // headshot starts at 1.4m (generous — catches chin/n
 const BODY_ZONE = 0.75;  // body starts at 0.75m
 
 // Render remote players this many seconds behind the latest received snapshot.
-// 2 ticks at 62 Hz = 32 ms — matches CS:GO's default cl_interp_ratio 2.
-const INTERP_DELAY  = 0.032;
-// Allow up to this multiplier past the interpolation window before clamping.
-// DarkPlaces calls this "lerpexcess" — it hides single dropped packets.
-const LERP_EXCESS   = 0.15;
+// 100 ms = ~6 ticks at 62 Hz — large enough to absorb typical Wi-Fi/mobile jitter
+// without extrapolating. CS:GO uses ~62-100 ms on most connections.
+const INTERP_DELAY  = 0.100;
+// Allow up to this fraction past the interpolation window before clamping.
+// 30 % hides a single badly-delayed packet without extrapolating to wild positions.
+const LERP_EXCESS   = 0.30;
+// Maximum time we'll extrapolate using the last known velocity.
+// Beyond this the player freezes in place rather than flying off-screen.
+const MAX_EXTRAP    = 0.200;
 
 interface Snapshot {
   x: number; y: number; z: number; yaw: number; t: number;
@@ -104,15 +108,20 @@ export class RemotePlayers {
       e.data.yaw = p.yaw;
 
       // Compute velocity from the previous snapshot for extrapolation.
+      // Require at least 8ms between snaps — below that (e.g. burst after lag)
+      // the division is noisy and can produce hundreds of m/s.
       const prev = e.snaps[e.snaps.length - 1];
       const dt   = t - prev.t;
-      const vx = dt > 0 ? (p.x - prev.x) / dt : prev.vx;
-      const vy = dt > 0 ? (p.y - prev.y) / dt : prev.vy;
-      const vz = dt > 0 ? (p.z - prev.z) / dt : prev.vz;
+      const goodDt = dt >= 0.008;
+      const MAX_VEL = 20; // reasonable sprint cap in m/s
+      const clamp = (v: number) => Math.max(-MAX_VEL, Math.min(MAX_VEL, v));
+      const vx = goodDt ? clamp((p.x - prev.x) / dt) : prev.vx;
+      const vy = goodDt ? clamp((p.y - prev.y) / dt) : prev.vy;
+      const vz = goodDt ? clamp((p.z - prev.z) / dt) : prev.vz;
 
-      // Push snapshot and keep a rolling 128-frame (~2 s) window.
+      // Push snapshot and keep a rolling 256-frame (~4 s) window.
       e.snaps.push({ x: p.x, y: p.y, z: p.z, yaw: p.yaw, t, vx, vy, vz });
-      if (e.snaps.length > 128) e.snaps.shift();
+      if (e.snaps.length > 256) e.snaps.shift();
 
       if (p.tier !== e.data.tier) {
         e.data.tier = p.tier;
@@ -138,8 +147,9 @@ export class RemotePlayers {
 
         if (renderTime >= latest.t) {
           // Extrapolation zone — renderTime is past the newest snapshot.
-          // Use velocity from the latest snapshot to project forward (Quake 3 style).
-          const ahead = renderTime - latest.t;
+          // Cap at MAX_EXTRAP so a laggy/disconnecting player freezes instead of
+          // flying off at full velocity indefinitely.
+          const ahead = Math.min(renderTime - latest.t, MAX_EXTRAP);
           x = latest.x + latest.vx * ahead;
           y = latest.y + latest.vy * ahead;
           z = latest.z + latest.vz * ahead;
