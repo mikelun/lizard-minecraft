@@ -685,29 +685,54 @@ let dummyDead = false;
 remotePlayers.add({ id: DUMMY_ID, x: -14, y: 5, z: 36, yaw: Math.PI, tier: 0 });
 
 // ── Kill feed DOM element ──────────────────────────────────────────────────
+// ── Global UI styles (animations) ─────────────────────────────────────────
+{
+  const s = document.createElement('style');
+  s.textContent = `
+    @keyframes vvDots{0%,100%{opacity:.2}40%{opacity:1}}
+    @keyframes vvPulse{0%,100%{opacity:.7}50%{opacity:1}}
+    @keyframes vvFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes vvKill{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
+    @keyframes vvRespawnBar{from{width:100%}to{width:0%}}
+    .vv-dot{display:inline-block;animation:vvDots 1.2s ease-in-out infinite}
+    .vv-dot:nth-child(2){animation-delay:.2s}
+    .vv-dot:nth-child(3){animation-delay:.4s}
+  `;
+  document.head.appendChild(s);
+}
+
+// ── Kill feed ──────────────────────────────────────────────────────────────
 const killFeedEl = document.createElement('div');
 killFeedEl.style.cssText = `
-  position:fixed;top:12px;right:12px;width:280px;
-  font-family:monospace;font-size:13px;color:#fff;
-  text-shadow:0 1px 3px #000;pointer-events:none;
-  display:flex;flex-direction:column;gap:3px;
+  position:fixed;top:16px;right:16px;width:300px;
+  font-family:'Arial',sans-serif;font-size:12px;color:#fff;
+  pointer-events:none;display:flex;flex-direction:column;gap:2px;
 `;
 document.getElementById('app')!.appendChild(killFeedEl);
 
 function pushKillFeed(html: string) {
   const line = document.createElement('div');
-  line.style.cssText = 'background:rgba(0,0,0,0.55);padding:3px 7px;border-radius:3px;';
+  line.style.cssText = `
+    background:rgba(0,0,0,0.72);border-left:2px solid rgba(255,255,255,0.18);
+    padding:5px 10px;animation:vvKill .15s ease-out;
+    backdrop-filter:blur(4px);letter-spacing:.3px;
+  `;
   line.innerHTML = html;
   killFeedEl.prepend(line);
-  setTimeout(() => line.remove(), 5000);
+  setTimeout(() => {
+    line.style.transition = 'opacity .4s';
+    line.style.opacity = '0';
+    setTimeout(() => line.remove(), 400);
+  }, 4600);
 }
 
-// ── Tier banner ────────────────────────────────────────────────────────────
+// ── Tier / weapon progression banner ──────────────────────────────────────
 const tierBanner = document.createElement('div');
 tierBanner.style.cssText = `
-  position:fixed;bottom:110px;left:50%;transform:translateX(-50%);
-  font-family:monospace;font-size:15px;color:#ffe066;
-  text-shadow:0 1px 4px #000;pointer-events:none;display:none;
+  position:fixed;bottom:120px;left:50%;transform:translateX(-50%);
+  font-family:'Arial',sans-serif;font-size:11px;letter-spacing:1.5px;
+  text-transform:uppercase;color:rgba(255,255,255,0.5);
+  pointer-events:none;display:none;text-align:center;
 `;
 document.getElementById('app')!.appendChild(tierBanner);
 
@@ -718,21 +743,26 @@ function updateTierBanner() {
     ? WEAPON_NAMES[GUN_TIER_SLOTS[net.localTier + 1]]
     : 'WIN';
   tierBanner.style.display = 'block';
-  tierBanner.textContent = `Tier ${net.localTier + 1}/6 — ${WEAPON_NAMES[slot]}  →  ${next}`;
+  tierBanner.innerHTML =
+    `<span style="color:#e8b84b;font-weight:bold">${WEAPON_NAMES[slot]}</span>` +
+    `<span style="margin:0 8px;opacity:.4">›</span>` +
+    `<span>${next}</span>` +
+    `<span style="margin-left:10px;opacity:.35">${net.localTier + 1} / ${GUN_TIER_SLOTS.length}</span>`;
 }
 
-// ── HP bar ─────────────────────────────────────────────────────────────────
+// ── HP bar (bottom-left, CS style) ────────────────────────────────────────
 const hpBarWrap = document.createElement('div');
 hpBarWrap.style.cssText = `
-  position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
-  width:200px;font-family:monospace;pointer-events:none;display:none;
+  position:fixed;bottom:20px;left:24px;
+  font-family:'Arial',sans-serif;pointer-events:none;display:none;width:140px;
 `;
 hpBarWrap.innerHTML = `
-  <div style="color:#fff;font-size:13px;text-align:center;text-shadow:0 1px 3px #000;margin-bottom:3px">
-    HP <span id="hp-value">100</span>
+  <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:5px">
+    <span id="hp-value" style="font-size:38px;font-weight:700;color:#fff;line-height:1;letter-spacing:-1px"></span>
+    <span style="font-size:11px;color:rgba(255,255,255,0.4);letter-spacing:1px;text-transform:uppercase">HP</span>
   </div>
-  <div style="background:rgba(0,0,0,0.5);height:6px;border-radius:3px;overflow:hidden">
-    <div id="hp-fill" style="background:#4f4;height:100%;width:100%;transition:width .1s"></div>
+  <div style="height:2px;background:rgba(255,255,255,0.12);border-radius:1px;overflow:hidden">
+    <div id="hp-fill" style="height:100%;width:100%;transition:width .12s,background .3s;border-radius:1px"></div>
   </div>
 `;
 document.getElementById('app')!.appendChild(hpBarWrap);
@@ -742,25 +772,55 @@ let _localHp = 100;
 function setLocalHp(hp: number) {
   _localHp = hp;
   hpValueEl.textContent = String(hp);
-  hpFillEl.style.width  = hp + '%';
-  hpFillEl.style.background = hp > 50 ? '#4f4' : hp > 25 ? '#fa4' : '#f44';
+  hpFillEl.style.width = hp + '%';
+  hpFillEl.style.background = hp > 50 ? '#57c455' : hp > 25 ? '#d4913a' : '#c94040';
 }
+
+// ── Connecting overlay ─────────────────────────────────────────────────────
+const connectingOverlay = document.createElement('div');
+connectingOverlay.style.cssText = `
+  position:fixed;inset:0;background:#0d0e10;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;z-index:500;
+  font-family:'Arial',sans-serif;gap:28px;
+`;
+connectingOverlay.innerHTML = `
+  <div style="font-size:28px;font-weight:700;letter-spacing:6px;text-transform:uppercase;
+    color:#fff">LIZARD</div>
+  <div style="width:220px;height:1px;background:rgba(255,255,255,0.1)"></div>
+  <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:rgba(255,255,255,0.35)">
+    Connecting<span class="vv-dot">.</span><span class="vv-dot">.</span><span class="vv-dot">.</span>
+  </div>
+`;
+document.getElementById('app')!.appendChild(connectingOverlay);
+
+// Freeze player in place until the server welcome arrives.
+controller.physics.flying  = true;
+controller.physics.velocity.set(0, 0, 0);
 
 // ── Death screen ───────────────────────────────────────────────────────────
 const deathScreen = document.createElement('div');
 deathScreen.style.cssText = `
-  position:fixed;inset:0;background:rgba(180,0,0,0.45);
-  display:none;flex-direction:column;align-items:center;justify-content:center;
-  pointer-events:none;z-index:200;
+  position:fixed;inset:0;display:none;flex-direction:column;
+  align-items:center;justify-content:center;pointer-events:none;z-index:200;
+  background:radial-gradient(ellipse 120% 100% at 50% 100%, rgba(120,0,0,0.55) 0%, rgba(0,0,0,0.72) 60%);
 `;
 deathScreen.innerHTML = `
-  <div style="color:#fff;font-size:72px;font-weight:bold;
-    text-shadow:0 3px 12px #000;letter-spacing:4px">YOU DIED</div>
-  <div id="respawn-cd" style="color:#fff;font-size:36px;margin-top:20px;
-    text-shadow:0 2px 8px #000"></div>
+  <div style="font-family:'Arial',sans-serif;text-align:center;animation:vvFadeIn .25s ease-out">
+    <div style="font-size:11px;letter-spacing:5px;text-transform:uppercase;
+      color:rgba(255,255,255,0.4);margin-bottom:14px">You were</div>
+    <div style="font-size:68px;font-weight:900;letter-spacing:8px;text-transform:uppercase;
+      color:#fff;line-height:1">ELIMINATED</div>
+    <div style="margin-top:28px;width:260px;height:2px;background:rgba(255,255,255,0.1);
+      border-radius:1px;overflow:hidden;margin-left:auto;margin-right:auto">
+      <div id="respawn-bar" style="height:100%;background:rgba(255,255,255,0.35);border-radius:1px"></div>
+    </div>
+    <div id="respawn-cd" style="margin-top:12px;font-size:11px;letter-spacing:3px;
+      text-transform:uppercase;color:rgba(255,255,255,0.35)"></div>
+  </div>
 `;
 document.getElementById('app')!.appendChild(deathScreen);
-const respawnCdEl = deathScreen.querySelector('#respawn-cd') as HTMLElement;
+const respawnCdEl   = deathScreen.querySelector('#respawn-cd')  as HTMLElement;
+const respawnBarEl  = deathScreen.querySelector('#respawn-bar') as HTMLElement;
 let _isDead = false;
 let _respawnCountdown = 0;
 
@@ -769,7 +829,13 @@ function enterDeathState() {
   _respawnCountdown = 3;
   setLocalHp(0);
   deathScreen.style.display = 'flex';
-  respawnCdEl.textContent = 'Respawning in 3...';
+  respawnCdEl.textContent = 'Respawning in 3';
+  respawnBarEl.style.transition = 'none';
+  respawnBarEl.style.width = '100%';
+  // Force reflow so the transition starts from 100%
+  void respawnBarEl.offsetWidth;
+  respawnBarEl.style.transition = 'width 3s linear';
+  respawnBarEl.style.width = '0%';
 }
 function exitDeathState() {
   _isDead = false;
@@ -781,10 +847,12 @@ function exitDeathState() {
 net.onEvent = ev => {
   if (ev.t === 'welcome') {
     for (const p of ev.players) remotePlayers.add(p);
-    // Teleport to the server-assigned spawn so we share the same arena as everyone else.
+    // Teleport to the server-assigned spawn and unfreeze.
     controller.physics.position.set(ev.spawn[0], ev.spawn[1], ev.spawn[2]);
     controller.physics.smoothY = ev.spawn[1];
     controller.physics.velocity.set(0, 0, 0);
+    controller.physics.flying = false;
+    connectingOverlay.style.display = 'none';
     hpBarWrap.style.display = 'block';
     setLocalHp(100);
     // Force correct weapon immediately so there's no one-frame M16A1 flash.
@@ -796,22 +864,25 @@ net.onEvent = ev => {
     remotePlayers.remove(ev.id);
   } else if (ev.t === 'kill') {
     const short = (id: string) => id.slice(0, 4).toUpperCase();
-    const killerLabel = ev.killer === net.localId ? '<span style="color:#4fc">YOU</span>' : `#${short(ev.killer)}`;
-    const victimLabel = ev.victim === net.localId ? '<span style="color:#f66">YOU</span>' : `#${short(ev.victim)}`;
-    pushKillFeed(`${killerLabel} ☠ ${victimLabel} <span style="color:#aaa">[${ev.weaponName}]</span>`);
+    const killerLabel = ev.killer === net.localId
+      ? '<span style="color:#57c455;font-weight:700">YOU</span>'
+      : `<span style="color:rgba(255,255,255,0.8)">#${short(ev.killer)}</span>`;
+    const victimLabel = ev.victim === net.localId
+      ? '<span style="color:#c94040;font-weight:700">YOU</span>'
+      : `<span style="color:rgba(255,255,255,0.55)">#${short(ev.victim)}</span>`;
+    pushKillFeed(`${killerLabel}<span style="color:rgba(255,255,255,0.2);margin:0 7px">✕</span>${victimLabel}<span style="color:rgba(255,255,255,0.25);margin-left:8px;font-size:10px;letter-spacing:.5px">${ev.weaponName.toUpperCase()}</span>`);
     if (ev.killer === net.localId) updateTierBanner();
-    // Instantly hide the dead body
     if (ev.victim === net.localId) {
       enterDeathState();
     } else {
       remotePlayers.hidePlayer(ev.victim);
     }
   } else if (ev.t === 'win') {
-    const label = ev.id === net.localId ? 'YOU WIN! 🏆' : `Player #${ev.id.slice(0,4).toUpperCase()} wins!`;
-    pushKillFeed(`<span style="color:#ffe066;font-size:16px">${label}</span>`);
+    const label = ev.id === net.localId ? 'VICTORY' : `PLAYER #${ev.id.slice(0,4).toUpperCase()} WINS`;
+    pushKillFeed(`<span style="color:#e8b84b;font-weight:700;letter-spacing:2px">${label}</span>`);
     updateTierBanner();
   } else if (ev.t === 'reset') {
-    pushKillFeed('<span style="color:#aaa">— New round —</span>');
+    pushKillFeed('<span style="color:rgba(255,255,255,0.25);letter-spacing:2px;font-size:10px">NEW ROUND</span>');
     net.localTier = 0;
     controller.weaponIndex = GUN_TIER_SLOTS[0];
     exitDeathState();
@@ -871,7 +942,7 @@ function tick(now: number) {
   if (_isDead && _respawnCountdown > 0) {
     _respawnCountdown -= dt;
     const secs = Math.max(1, Math.ceil(_respawnCountdown));
-    respawnCdEl.textContent = `Respawning in ${secs}...`;
+    respawnCdEl.textContent = `Respawning in ${secs}`;
   }
 
   controller.update(dt);
