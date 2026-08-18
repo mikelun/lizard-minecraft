@@ -18,7 +18,10 @@ export function raycastWithNormal(
   origin: Vec3,
   direction: Vec3,
   maxDistance: number,
-  isSolid: (x: number, y: number, z: number) => boolean,
+  // enterY/exitY: the ray's Y coordinate at voxel entry/exit — lets callers
+  // resolve half-height blocks (slabs, stairs) instead of treating every
+  // occupied voxel as fully solid.
+  isSolid: (x: number, y: number, z: number, enterY: number, exitY: number) => boolean,
 ): RaycastHit | null {
   const stepX = direction.x > 0 ? 1 : -1;
   const stepY = direction.y > 0 ? 1 : -1;
@@ -37,9 +40,14 @@ export function raycastWithNormal(
   let tMaxZ = (voxelZ + (stepZ > 0 ? 1 : 0) - origin.z) / direction.z;
 
   let lastAxis = -1; // 0=x, 1=y, 2=z
+  let tEnter = 0;
 
   for (let i = 0; i < maxDistance; i++) {
-    if (isSolid(voxelX, voxelY, voxelZ)) {
+    const tExit = Math.min(tMaxX, tMaxY, tMaxZ);
+    const yAtEnter = origin.y + direction.y * tEnter;
+    const yAtExit  = origin.y + direction.y * (Number.isFinite(tExit) ? tExit : tEnter);
+
+    if (isSolid(voxelX, voxelY, voxelZ, yAtEnter, yAtExit)) {
       const normal: Vec3 = { x: 0, y: 0, z: 0 };
       if (lastAxis === 0) normal.x = -stepX;
       else if (lastAxis === 1) normal.y = -stepY;
@@ -51,14 +59,17 @@ export function raycastWithNormal(
     if (tMaxX < tMaxY && tMaxX < tMaxZ) {
       lastAxis = 0;
       voxelX += stepX;
+      tEnter = tMaxX;
       tMaxX += tDeltaX;
     } else if (tMaxY < tMaxZ) {
       lastAxis = 1;
       voxelY += stepY;
+      tEnter = tMaxY;
       tMaxY += tDeltaY;
     } else {
       lastAxis = 2;
       voxelZ += stepZ;
+      tEnter = tMaxZ;
       tMaxZ += tDeltaZ;
     }
   }

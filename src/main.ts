@@ -202,12 +202,27 @@ const _shotNormalMat  = new THREE.Matrix3();
 const _shotInstMat    = new THREE.Matrix4();
 const _shotNormalVec  = new THREE.Vector3();
 
+// Mirrors Physics.ts's blockSolid() half-height logic so bullets pass through
+// the "air" half of slabs and stairs instead of treating the whole voxel as
+// solid. enterY/exitY bound the ray's Y range while it's inside this voxel
+// (raycastWithNormal guarantees both stay within [by, by+1]).
+function bulletBlockSolid(x: number, y: number, z: number, enterY: number, exitY: number): boolean {
+  const id = world.getBlock(x, y, z);
+  if (id === 0) return false;
+  const segMin = Math.min(enterY, exitY);
+  const segMax = Math.max(enterY, exitY);
+  // Bottom slabs (38-44): solid region is y..y+0.5
+  if (id >= 38 && id <= 44) return segMin < y + 0.5;
+  // Top slabs (178-184): solid region is y+0.5..y+1
+  if (id >= 178 && id <= 184) return segMax > y + 0.5;
+  // Stairs (50-113): treat as bottom-half solid, matching player physics.
+  if (id >= 50 && id <= 113) return segMin < y + 0.5;
+  return world.isSolid(x, y, z);
+}
+
 function handleShot(origin: THREE.Vector3, dir: THREE.Vector3): number {
   // 1. Block DDA raycast (fast, exact voxel normals)
-  const blockHit = raycastWithNormal(
-    origin, dir, 200,
-    (x, y, z) => world.isSolid(x, y, z),
-  );
+  const blockHit = raycastWithNormal(origin, dir, 200, bulletBlockSolid);
 
   let blockDist = Infinity;
   let blockPoint: THREE.Vector3 | null = null;
