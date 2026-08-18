@@ -217,7 +217,7 @@ export class World {
    *  synchronously — no worker round-trip needed for collision queries. */
   async loadBin(): Promise<void> {
     try {
-      const resp = await fetch(`/world/world.bin.gz?v=${Date.now()}`);
+      const resp = await fetch('/world/world.bin.gz');
       // Read raw bytes first — nginx may serve the .gz file with
       // Content-Encoding: gzip, causing the browser to auto-decompress before
       // we see the body.  In that case `raw` already contains MCBIN002 bytes.

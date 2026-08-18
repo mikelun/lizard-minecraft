@@ -1,0 +1,10 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+await page.goto("http://localhost:5173/", { waitUntil: "load" });
+await page.waitForFunction(() => !!window.__gunBones2, { timeout: 15000 });
+await page.click("canvas").catch(()=>{});
+await page.keyboard.press("KeyQ");
+await page.waitForTimeout(1500);
+await page.screenshot({ path: "/private/tmp/claude-501/-Users-mikelun-Work-lizard-minecraft/f17fc658-0150-4682-acf0-ff54c7226ba4/scratchpad/ak47_look.png" });
+await browser.close();
