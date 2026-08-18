@@ -277,7 +277,7 @@ const _WEAPON_DMG   = [35, 50, 25, 20, 100, 15];
 const _ZONE_MULT    = [0.75, 1.0, 4.0];
 
 function showDamageNumber(worldPos: THREE.Vector3, zone: number) {
-  const dmg = Math.round((_WEAPON_DMG[_GUN_TIERS[net.localTier] ?? 0] ?? 25) * (_ZONE_MULT[zone] ?? 1) / 10);
+  const dmg = Math.round((_WEAPON_DMG[_GUN_TIERS[net.localTier] ?? 0] ?? 25) * (_ZONE_MULT[zone] ?? 1) / 3);
   const ndc = worldPos.clone().project(controller.fpCamera.camera);
   if (ndc.z > 1) return; // behind camera
   const sx = (ndc.x + 1) / 2 * window.innerWidth;
@@ -339,7 +339,7 @@ controller.onShot = (origin, dirIn) => {
         if (hitId === DUMMY_ID) {
           if (!dummyDead) {
             const slot = _GUN_TIERS[net.localTier] ?? 0;
-            const dmg  = Math.round((_WEAPON_DMG[slot] ?? 25) * (_ZONE_MULT[zone] ?? 1) / 10);
+            const dmg  = Math.round((_WEAPON_DMG[slot] ?? 25) * (_ZONE_MULT[zone] ?? 1) / 3);
             dummyHp = Math.max(0, dummyHp - dmg);
             if (dummyHp <= 0) {
               dummyDead = true;
