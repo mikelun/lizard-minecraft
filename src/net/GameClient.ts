@@ -17,7 +17,7 @@ export type GameEvent =
   | { t: 'welcome'; id: string; spawn: [number,number,number]; tier: number; players: RemotePlayerData[] }
   | { t: 'join';    id: string; x: number; y: number; z: number; tier: number }
   | { t: 'leave';   id: string }
-  | { t: 'kill';    killer: string; victim: string; weapon: number; weaponName: string; killerTier: number }
+  | { t: 'kill';    killer: string; victim: string; weapon: number; weaponName: string; victimTier: number }
   | { t: 'win';     id: string }
   | { t: 'reset' }
   | { t: 'respawn'; id: string; x: number; y: number; z: number };
@@ -62,8 +62,8 @@ export class GameClient {
       });
 
       room.onMessage('kill', (msg: any) => {
-        if (msg.killer === this.localId) this.localTier = msg.killerTier;
-        this.onEvent({ t: 'kill', killer: msg.killer, victim: msg.victim, weapon: msg.weapon, weaponName: msg.weaponName, killerTier: msg.killerTier });
+        if (msg.victim === this.localId) this.localTier = msg.victimTier;
+        this.onEvent({ t: 'kill', killer: msg.killer, victim: msg.victim, weapon: msg.weapon, weaponName: msg.weaponName, victimTier: msg.victimTier });
       });
 
       room.onMessage('win', (msg: any) => {

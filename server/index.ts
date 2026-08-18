@@ -100,17 +100,17 @@ class GameRoom extends Room<GameState> {
     if (vic.hp > 0) return;
 
     vic.hp = 0; vic.dead = true;
-    atk.tier++;
+    vic.tier++;
 
-    if (atk.tier >= TIER_COUNT) {
-      this.broadcast('win', { t: 'win', id: attackerId });
+    if (vic.tier >= TIER_COUNT) {
+      this.broadcast('win', { t: 'win', id: victimId });
       setTimeout(() => this._reset(), 5000);
     } else {
       this.broadcast('kill', {
         t: 'kill',
         killer: attackerId, victim: victimId,
         weapon: slot, weaponName: WEAPON_NAMES[slot],
-        killerTier: atk.tier,
+        victimTier: vic.tier,
       });
     }
 

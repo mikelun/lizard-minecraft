@@ -871,7 +871,7 @@ net.onEvent = ev => {
       ? '<span style="color:#c94040;font-weight:700">YOU</span>'
       : `<span style="color:rgba(255,255,255,0.55)">#${short(ev.victim)}</span>`;
     pushKillFeed(`${killerLabel}<span style="color:rgba(255,255,255,0.2);margin:0 7px">✕</span>${victimLabel}<span style="color:rgba(255,255,255,0.25);margin-left:8px;font-size:10px;letter-spacing:.5px">${ev.weaponName.toUpperCase()}</span>`);
-    if (ev.killer === net.localId) updateTierBanner();
+    if (ev.victim === net.localId) updateTierBanner();
     if (ev.victim === net.localId) {
       enterDeathState();
     } else {
