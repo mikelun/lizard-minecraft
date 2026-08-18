@@ -72,15 +72,16 @@ class GameRoom extends Room<GameState> {
     const spawn = randomSpawn();
     const p     = new Player();
     p.x = spawn[0]; p.y = spawn[1]; p.z = spawn[2];
+    p.tier = Math.floor(Math.random() * TIER_COUNT);
     this.state.players.set(client.sessionId, p);
 
     // Welcome: spawn coords + peer list for immediate display
     const peers = Array.from(this.state.players.entries())
       .filter(([id]) => id !== client.sessionId)
       .map(([id, q]) => ({ id, x: q.x, y: q.y, z: q.z, yaw: q.yaw, tier: q.tier }));
-    client.send('welcome', { t: 'welcome', id: client.sessionId, spawn, tier: 0, players: peers });
+    client.send('welcome', { t: 'welcome', id: client.sessionId, spawn, tier: p.tier, players: peers });
 
-    this.broadcast('join', { t: 'join', id: client.sessionId, x: spawn[0], y: spawn[1], z: spawn[2], tier: 0 }, { except: client });
+    this.broadcast('join', { t: 'join', id: client.sessionId, x: spawn[0], y: spawn[1], z: spawn[2], tier: p.tier }, { except: client });
     console.log(`[GameRoom] ${client.sessionId.slice(0,6)} joined (${this.clients.length}/${this.maxClients})`);
   }
 
@@ -100,19 +101,14 @@ class GameRoom extends Room<GameState> {
     if (vic.hp > 0) return;
 
     vic.hp = 0; vic.dead = true;
-    vic.tier++;
+    vic.tier = Math.floor(Math.random() * TIER_COUNT);
 
-    if (vic.tier >= TIER_COUNT) {
-      this.broadcast('win', { t: 'win', id: victimId });
-      setTimeout(() => this._reset(), 5000);
-    } else {
-      this.broadcast('kill', {
-        t: 'kill',
-        killer: attackerId, victim: victimId,
-        weapon: slot, weaponName: WEAPON_NAMES[slot],
-        victimTier: vic.tier,
-      });
-    }
+    this.broadcast('kill', {
+      t: 'kill',
+      killer: attackerId, victim: victimId,
+      weapon: slot, weaponName: WEAPON_NAMES[slot],
+      victimTier: vic.tier,
+    });
 
     setTimeout(() => {
       if (!this.state.players.has(victimId)) return;
@@ -126,7 +122,7 @@ class GameRoom extends Room<GameState> {
 
   private _reset() {
     this.state.players.forEach(p => {
-      p.tier = 0; p.hp = 100; p.dead = false;
+      p.tier = Math.floor(Math.random() * TIER_COUNT); p.hp = 100; p.dead = false;
       const s = randomSpawn();
       p.x = s[0]; p.y = s[1]; p.z = s[2];
     });
