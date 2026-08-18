@@ -18,6 +18,7 @@ const TIER_COUNT   = GUN_TIERS.length;
 const WEAPON_NAMES = ['M16A1', 'Deagle', 'MP7', 'P90', 'Ballista', 'LAMG'];
 const WEAPON_DAMAGE= [35, 50, 25, 20, 100, 15]; // base dmg by slot
 const ZONE_MULT    = [0.75, 1.0, 4.0];           // legs / body / head
+const MAX_HP       = 300;
 
 function randomSpawn(): [number, number, number] {
   return SPAWNS[Math.floor(Math.random() * SPAWNS.length)];
@@ -31,7 +32,7 @@ class Player extends Schema {
   @type('float32') z    = 0;
   @type('float32') yaw  = 0;
   @type('uint8')   tier = 0;
-  @type('uint8')   hp   = 100;
+  @type('uint16')  hp   = 300;
   @type('boolean') dead = false;
 }
 
@@ -97,8 +98,11 @@ class GameRoom extends Room<GameState> {
     if (!atk || !vic || vic.dead || atk.dead) return;
 
     const slot = GUN_TIERS[atk.tier];
-    vic.hp = Math.max(0, vic.hp - Math.round((WEAPON_DAMAGE[slot] ?? 25) * (ZONE_MULT[zone] ?? 1) / 3));
-    if (vic.hp > 0) return;
+    vic.hp = Math.max(0, vic.hp - Math.round((WEAPON_DAMAGE[slot] ?? 25) * (ZONE_MULT[zone] ?? 1)));
+    if (vic.hp > 0) {
+      this.broadcast('hp', { t: 'hp', id: victimId, hp: vic.hp });
+      return;
+    }
 
     vic.hp = 0; vic.dead = true;
     vic.tier = Math.floor(Math.random() * TIER_COUNT);
@@ -114,7 +118,7 @@ class GameRoom extends Room<GameState> {
       if (!this.state.players.has(victimId)) return;
       const s = randomSpawn();
       const v = this.state.players.get(victimId)!;
-      v.hp = 100; v.dead = false;
+      v.hp = MAX_HP; v.dead = false;
       v.x = s[0]; v.y = s[1]; v.z = s[2];
       this.broadcast('respawn', { t: 'respawn', id: victimId, x: s[0], y: s[1], z: s[2] });
     }, 3000);
@@ -122,7 +126,7 @@ class GameRoom extends Room<GameState> {
 
   private _reset() {
     this.state.players.forEach(p => {
-      p.tier = Math.floor(Math.random() * TIER_COUNT); p.hp = 100; p.dead = false;
+      p.tier = Math.floor(Math.random() * TIER_COUNT); p.hp = MAX_HP; p.dead = false;
       const s = randomSpawn();
       p.x = s[0]; p.y = s[1]; p.z = s[2];
     });

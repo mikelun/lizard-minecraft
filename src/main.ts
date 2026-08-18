@@ -277,7 +277,7 @@ const _WEAPON_DMG   = [35, 50, 25, 20, 100, 15];
 const _ZONE_MULT    = [0.75, 1.0, 4.0];
 
 function showDamageNumber(worldPos: THREE.Vector3, zone: number) {
-  const dmg = Math.round((_WEAPON_DMG[_GUN_TIERS[net.localTier] ?? 0] ?? 25) * (_ZONE_MULT[zone] ?? 1) / 3);
+  const dmg = Math.round((_WEAPON_DMG[_GUN_TIERS[net.localTier] ?? 0] ?? 25) * (_ZONE_MULT[zone] ?? 1));
   const ndc = worldPos.clone().project(controller.fpCamera.camera);
   if (ndc.z > 1) return; // behind camera
   const sx = (ndc.x + 1) / 2 * window.innerWidth;
@@ -339,13 +339,13 @@ controller.onShot = (origin, dirIn) => {
         if (hitId === DUMMY_ID) {
           if (!dummyDead) {
             const slot = _GUN_TIERS[net.localTier] ?? 0;
-            const dmg  = Math.round((_WEAPON_DMG[slot] ?? 25) * (_ZONE_MULT[zone] ?? 1) / 3);
+            const dmg  = Math.round((_WEAPON_DMG[slot] ?? 25) * (_ZONE_MULT[zone] ?? 1));
             dummyHp = Math.max(0, dummyHp - dmg);
             if (dummyHp <= 0) {
               dummyDead = true;
               remotePlayers.hidePlayer(DUMMY_ID);
               setTimeout(() => {
-                dummyHp   = 100;
+                dummyHp   = MAX_HP;
                 dummyDead = false;
                 remotePlayers.showPlayer(DUMMY_ID);
               }, 3000);
@@ -503,7 +503,7 @@ async function loadPointBlankGun(
 
     const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData as any, tex as THREE.Texture, 1 / 16);
 
-    for (const name of [...hideBones, "leftarm"]) {
+    for (const name of [...hideBones, "leftarm", "rightarm"]) {
       const grp = gunBones[name];
       if (grp) grp.traverse((c: THREE.Object3D) => { c.visible = false; });
     }
@@ -552,7 +552,7 @@ async function loadPointBlankGun(
     ]);
 
     const { root: gunRoot, boneGroups: gunBones } = buildGeoModel(geoData, tex, 1 / 16);
-    for (const name of ["_cb_suppressor", "_cb_scope", "muzzleflash", "bullet", "scope", "leftarm"]) {
+    for (const name of ["_cb_suppressor", "_cb_scope", "muzzleflash", "bullet", "scope", "leftarm", "rightarm"]) {
       const grp = gunBones[name];
       if (grp) grp.traverse((c: THREE.Object3D) => { c.visible = false; });
     }
@@ -680,7 +680,7 @@ const remotePlayers = new RemotePlayers(scene);
 
 // ── Training dummy ────────────────────────────────────────────────────────────
 const DUMMY_ID = '__dummy__';
-let dummyHp   = 100;
+let dummyHp   = 300;
 let dummyDead = false;
 remotePlayers.add({ id: DUMMY_ID, x: -14, y: 5, z: 36, yaw: Math.PI, tier: 0 });
 
@@ -768,12 +768,14 @@ hpBarWrap.innerHTML = `
 document.getElementById('app')!.appendChild(hpBarWrap);
 const hpValueEl = hpBarWrap.querySelector('#hp-value') as HTMLElement;
 const hpFillEl  = hpBarWrap.querySelector('#hp-fill')  as HTMLElement;
-let _localHp = 100;
+const MAX_HP = 300;
+let _localHp = MAX_HP;
 function setLocalHp(hp: number) {
   _localHp = hp;
   hpValueEl.textContent = String(hp);
-  hpFillEl.style.width = hp + '%';
-  hpFillEl.style.background = hp > 50 ? '#57c455' : hp > 25 ? '#d4913a' : '#c94040';
+  const pct = (hp / MAX_HP) * 100;
+  hpFillEl.style.width = pct + '%';
+  hpFillEl.style.background = pct > 50 ? '#57c455' : pct > 25 ? '#d4913a' : '#c94040';
 }
 
 // ── Connecting overlay ─────────────────────────────────────────────────────
@@ -840,7 +842,7 @@ function enterDeathState() {
 function exitDeathState() {
   _isDead = false;
   _respawnCountdown = 0;
-  setLocalHp(100);
+  setLocalHp(MAX_HP);
   deathScreen.style.display = 'none';
 }
 
@@ -854,7 +856,7 @@ net.onEvent = ev => {
     controller.physics.flying = false;
     connectingOverlay.style.display = 'none';
     hpBarWrap.style.display = 'block';
-    setLocalHp(100);
+    setLocalHp(MAX_HP);
     // Force correct weapon immediately so there's no one-frame M16A1 flash.
     controller.weaponIndex = GUN_TIER_SLOTS[net.localTier];
     updateTierBanner();
@@ -897,6 +899,8 @@ net.onEvent = ev => {
       remotePlayers.respawn(ev.id, ev.x, ev.y, ev.z);
       remotePlayers.showPlayer(ev.id);
     }
+  } else if (ev.t === 'hp') {
+    if (ev.id === net.localId) setLocalHp(ev.hp);
   }
 };
 

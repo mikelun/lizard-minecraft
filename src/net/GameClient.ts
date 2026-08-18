@@ -20,7 +20,8 @@ export type GameEvent =
   | { t: 'kill';    killer: string; victim: string; weapon: number; weaponName: string; victimTier: number }
   | { t: 'win';     id: string }
   | { t: 'reset' }
-  | { t: 'respawn'; id: string; x: number; y: number; z: number };
+  | { t: 'respawn'; id: string; x: number; y: number; z: number }
+  | { t: 'hp';      id: string; hp: number };
 
 export class GameClient {
   private _client: ColyseusClient;
@@ -77,6 +78,10 @@ export class GameClient {
 
       room.onMessage('respawn', (msg: any) => {
         this.onEvent({ t: 'respawn', id: msg.id, x: msg.x, y: msg.y, z: msg.z });
+      });
+
+      room.onMessage('hp', (msg: any) => {
+        this.onEvent({ t: 'hp', id: msg.id, hp: msg.hp });
       });
 
       room.onLeave(() => {
