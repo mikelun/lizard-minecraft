@@ -96,7 +96,7 @@ class GameRoom extends Room<GameState> {
     if (!atk || !vic || vic.dead || atk.dead) return;
 
     const slot = GUN_TIERS[atk.tier];
-    vic.hp = Math.max(0, vic.hp - Math.round((WEAPON_DAMAGE[slot] ?? 25) * (ZONE_MULT[zone] ?? 1)));
+    vic.hp = Math.max(0, vic.hp - Math.round((WEAPON_DAMAGE[slot] ?? 25) * (ZONE_MULT[zone] ?? 1) / 10));
     if (vic.hp > 0) return;
 
     vic.hp = 0; vic.dead = true;
