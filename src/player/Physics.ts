@@ -249,21 +249,31 @@ export class PlayerPhysics {
       return;
     }
 
-    // Search downward from the max step height for the highest Y at the
-    // forward position that's actually clear — rather than first gating on
-    // whether the player's FULL box clears a full STEP_HEIGHT raise. That
-    // gate over-rejects a real, walkable small step (e.g. a 0.5-tall slab):
-    // whenever the ceiling clearance is enough for the ACTUAL step but less
-    // than the full STEP_HEIGHT constant, the old gate saw a collision at
-    // the inflated test height and never even looked for the real landing
-    // spot, reading as "player needs more than 2 blocks of headroom" for
-    // what was really just a slab step under a low ceiling.
+    // Scan downward from the max step height for the ACTUAL floor at the
+    // forward position — not the first clear height found (that over-selects
+    // the very top of the range whenever the area ahead is simply open air,
+    // e.g. approaching any ledge with clearance above it, which reported
+    // `needed` as a near-full STEP_HEIGHT and force-jumped on every single
+    // slab/stair instead of stepping smoothly) and not gated on the full
+    // STEP_HEIGHT raise being clear up front either (that over-rejected a
+    // real, walkable small step whenever the ceiling clearance was enough for
+    // the actual step but less than the full STEP_HEIGHT constant).
+    //
+    // Correct rule: walk down from the top of the range. Skip past a ceiling
+    // if the very top is blocked. Once clear, keep tracking the lowest still-
+    // clear Y — that's the true floor surface — and stop at the first
+    // collision after being clear (the floor itself).
     let landY: number | null = null;
     for (let testY = this.position.y + STEP_HEIGHT; testY > this.position.y + 1e-6; testY -= 0.05) {
       this._tmpC.copy(this.position);
       this._tmpC.y = testY;
       this._tmpC[axis] += delta;
-      if (!this.collides(this.aabbAt(this._tmpC))) { landY = testY; break; }
+      if (!this.collides(this.aabbAt(this._tmpC))) {
+        landY = testY;
+      } else if (landY !== null) {
+        break; // was clear, now blocked — landY is the floor surface
+      }
+      // else: still inside a ceiling/obstruction near the top — keep descending
     }
 
     if (landY === null) {
