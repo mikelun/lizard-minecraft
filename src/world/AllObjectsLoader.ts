@@ -278,7 +278,16 @@ export function isObjectSolidCell(x: number, y: number, z: number): boolean {
   return objectSolidCells.has(`${x},${y},${z}`);
 }
 
+// Marks the cells a rotated/thin entity ACTUALLY occupies, not just the axis-aligned
+// bounding box of its rotated corners. A blanket AABB fill badly over-blocks anything
+// rotated off-axis or thin (e.g. a door-shaped panel at a diagonal facing) — its AABB
+// can cover several times the entity's real footprint. Instead, every candidate cell
+// (found via the AABB, cheap to compute) is tested by transforming its center into the
+// entity's local unit-cube space: only cells whose center actually falls inside the
+// true rotated box get marked solid.
 const _aabbCorner = new THREE.Vector3();
+const _localPt     = new THREE.Vector3();
+const _invMatrix   = new THREE.Matrix4();
 function markSolidAABB(matrix: THREE.Matrix4) {
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
@@ -295,10 +304,15 @@ function markSolidAABB(matrix: THREE.Matrix4) {
   const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-6);
   const y0 = Math.floor(minY), y1 = Math.floor(maxY - 1e-6);
   const z0 = Math.floor(minZ), z1 = Math.floor(maxZ - 1e-6);
+
+  _invMatrix.copy(matrix).invert();
   for (let x = x0; x <= x1; x++) {
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
-        objectSolidCells.add(`${x},${y},${z}`);
+        _localPt.set(x + 0.5, y + 0.5, z + 0.5).applyMatrix4(_invMatrix);
+        if (Math.abs(_localPt.x) <= 0.5 && Math.abs(_localPt.y) <= 0.5 && Math.abs(_localPt.z) <= 0.5) {
+          objectSolidCells.add(`${x},${y},${z}`);
+        }
       }
     }
   }
