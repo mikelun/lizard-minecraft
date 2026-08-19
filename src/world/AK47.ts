@@ -219,10 +219,13 @@ export class AK47 {
       return false;
     }
 
-    // Apply recoil
+    // Apply recoil — the first shot in a burst stays level (matches SPRAY_PATTERN's
+    // own index-0 entry, which is [0,0]); climb starts from the second shot on.
     if (this.punchPerShot) {
-      this.punchYaw   += this.punchPerShot[0];
-      this.punchPitch += this.punchPerShot[1];
+      if (this.shotIndex > 0) {
+        this.punchYaw   += this.punchPerShot[0];
+        this.punchPitch += this.punchPerShot[1];
+      }
       this.modelKickYaw = 0;
     } else {
       const idx = Math.min(this.shotIndex, SPRAY_PATTERN.length - 1);
