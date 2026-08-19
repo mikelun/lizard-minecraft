@@ -1,7 +1,8 @@
 // © 2026 lizard.build — https://lizard.build — All rights reserved. See LICENSE.
 // Small ambient wildlife: low-poly voxel lizards that wander the map, matching
-// the brand's teal lizard mark. Purely decorative — no collision, no AI beyond
-// "pick a nearby point, run to it, pause, repeat."
+// the brand's teal lizard mark. Walks the real terrain — solid walls block
+// movement, half-height slabs/stairs are respected — and wander targets that
+// would require climbing more than a small step are rejected up front.
 
 import * as THREE from "three";
 import type { World } from "./World";
@@ -17,6 +18,28 @@ const IDLE_MAX    = 3.5;
 const ARRIVE_EPS  = 0.15;
 const TURN_RATE   = 8;    // yaw lerp speed
 const GAIT_RATE   = 10;   // leg-swing speed while running
+const HALF_WIDTH  = 0.14; // footprint half-width, used for wall probes
+const BODY_HEIGHT = 0.35;
+const STEP_LIMIT  = 0.55; // max climbable rise per step (matches a slab/stair half-block)
+const VERTICAL_SMOOTH = 10; // exponential lerp rate for the visual Y (no popping on ledges)
+
+// ── Ground height, matching Physics.ts's simplified half-block model ──────────
+// (bottom slabs/stairs: top surface at y+0.5; everything else: top surface at y+1)
+function groundSurfaceY(world: World, x: number, z: number): number {
+  const topY = world.surfaceHeightAt(x, z);
+  const id = world.getBlock(x, topY, z);
+  if (id >= 38 && id <= 44) return topY + 0.5;  // bottom slab
+  if (id >= 50 && id <= 113) return topY + 0.5; // stairs (treated as bottom-half, like Physics.ts)
+  return topY + 1;
+}
+
+// True if a lizard standing at (fromX,fromZ) can step to (toX,toZ) — rejects walls
+// and anything taller than a small step, but allows gentle terrain and slabs/stairs.
+function canStepTo(world: World, fromX: number, fromZ: number, toX: number, toZ: number): boolean {
+  const fromY = groundSurfaceY(world, fromX, fromZ);
+  const toY   = groundSurfaceY(world, toX, toZ);
+  return Math.abs(toY - fromY) <= STEP_LIMIT;
+}
 
 interface Leg {
   pivot: THREE.Group;
@@ -27,13 +50,18 @@ interface LizardInstance {
   root: THREE.Group;
   legs: Leg[];
   tailPivot: THREE.Group;
-  x: number; z: number; // feet position (y is derived from terrain each step)
+  box: THREE.Box3;
+  x: number; z: number;      // logical feet position (XZ)
+  visualY: number;           // smoothed render Y — lags behind the real ground height
   targetX: number; targetZ: number;
   running: boolean;
+  dead: boolean;
   idleTimer: number;
   gaitPhase: number;
   yaw: number;
 }
+
+const RESPAWN_DELAY_MS = 5000;
 
 function buildLizardMesh(): { root: THREE.Group; legs: Leg[]; tailPivot: THREE.Group } {
   const root = new THREE.Group();
@@ -79,17 +107,24 @@ function buildLizardMesh(): { root: THREE.Group; legs: Leg[]; tailPivot: THREE.G
   return { root, legs, tailPivot };
 }
 
+export interface LizardHit {
+  index: number;
+  pos: THREE.Vector3;
+}
+
 export class LizardSwarm {
   private lizards: LizardInstance[] = [];
+  private bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
 
   constructor(private scene: THREE.Scene, private world: World) {}
 
   /** Spawns `count` lizards scattered within the given XZ bounds. */
   spawn(count: number, minX: number, maxX: number, minZ: number, maxZ: number) {
+    this.bounds = { minX, maxX, minZ, maxZ };
     for (let i = 0; i < count; i++) {
       const x = minX + Math.random() * (maxX - minX);
       const z = minZ + Math.random() * (maxZ - minZ);
-      const y = this.world.surfaceHeightAt(x, z) + 1;
+      const y = groundSurfaceY(this.world, x, z);
 
       const { root, legs, tailPivot } = buildLizardMesh();
       const yaw = Math.random() * Math.PI * 2;
@@ -99,8 +134,10 @@ export class LizardSwarm {
 
       this.lizards.push({
         root, legs, tailPivot,
-        x, z, targetX: x, targetZ: z,
+        box: new THREE.Box3(),
+        x, z, visualY: y, targetX: x, targetZ: z,
         running: false,
+        dead: false,
         idleTimer: IDLE_MIN + Math.random() * (IDLE_MAX - IDLE_MIN),
         gaitPhase: Math.random() * Math.PI * 2,
         yaw,
@@ -108,16 +145,44 @@ export class LizardSwarm {
     }
   }
 
+  /** Hides a lizard and respawns it elsewhere on the map after a short delay. */
+  die(index: number) {
+    const l = this.lizards[index];
+    if (!l || l.dead) return;
+    l.dead = true;
+    l.running = false;
+    l.root.visible = false;
+    setTimeout(() => {
+      const { minX, maxX, minZ, maxZ } = this.bounds;
+      const x = minX + Math.random() * (maxX - minX);
+      const z = minZ + Math.random() * (maxZ - minZ);
+      const y = groundSurfaceY(this.world, x, z);
+      l.x = x; l.z = z; l.visualY = y;
+      l.targetX = x; l.targetZ = z;
+      l.yaw = Math.random() * Math.PI * 2;
+      l.root.position.set(x, y, z);
+      l.root.rotation.y = l.yaw;
+      l.dead = false;
+      l.root.visible = true;
+    }, RESPAWN_DELAY_MS);
+  }
+
   private pickTarget(l: LizardInstance, minX: number, maxX: number, minZ: number, maxZ: number) {
     const angle = Math.random() * Math.PI * 2;
     const dist  = WANDER_MIN + Math.random() * (WANDER_MAX - WANDER_MIN);
-    l.targetX = THREE.MathUtils.clamp(l.x + Math.cos(angle) * dist, minX, maxX);
-    l.targetZ = THREE.MathUtils.clamp(l.z + Math.sin(angle) * dist, minZ, maxZ);
+    const tx = THREE.MathUtils.clamp(l.x + Math.cos(angle) * dist, minX, maxX);
+    const tz = THREE.MathUtils.clamp(l.z + Math.sin(angle) * dist, minZ, maxZ);
+    // Reject targets that would require climbing a wall — just stay idle a beat
+    // longer and try again next tick rather than committing to a blocked path.
+    if (!canStepTo(this.world, l.x, l.z, tx, tz)) return;
+    l.targetX = tx;
+    l.targetZ = tz;
     l.running = true;
   }
 
   update(dt: number, minX: number, maxX: number, minZ: number, maxZ: number) {
     for (const l of this.lizards) {
+      if (l.dead) continue;
       if (!l.running) {
         l.idleTimer -= dt;
         if (l.idleTimer <= 0) this.pickTarget(l, minX, maxX, minZ, maxZ);
@@ -130,8 +195,17 @@ export class LizardSwarm {
           l.idleTimer = IDLE_MIN + Math.random() * (IDLE_MAX - IDLE_MIN);
         } else {
           const step = Math.min(dist, RUN_SPEED * dt);
-          l.x += (dx / dist) * step;
-          l.z += (dz / dist) * step;
+          const nx = l.x + (dx / dist) * step;
+          const nz = l.z + (dz / dist) * step;
+          if (canStepTo(this.world, l.x, l.z, nx, nz)) {
+            l.x = nx;
+            l.z = nz;
+          } else {
+            // Hit a wall mid-run — stop and pick a fresh target rather than
+            // grinding against it every frame.
+            l.running = false;
+            l.idleTimer = IDLE_MIN * 0.5;
+          }
 
           // Forward is local -Z: root.rotation.y = θ maps -Z to (-sinθ,-cosθ),
           // so facing the travel direction (dx,dz) needs θ = atan2(-dx,-dz)
@@ -145,8 +219,12 @@ export class LizardSwarm {
         }
       }
 
-      const y = this.world.surfaceHeightAt(l.x, l.z) + 1;
-      l.root.position.set(l.x, y, l.z);
+      // Smooth the visual Y toward the real ground height instead of snapping —
+      // ledges, slab edges, and stair steps glide instead of popping.
+      const targetY = groundSurfaceY(this.world, l.x, l.z);
+      l.visualY += (targetY - l.visualY) * Math.min(1, dt * VERTICAL_SMOOTH);
+
+      l.root.position.set(l.x, l.visualY, l.z);
       l.root.rotation.y = l.yaw;
 
       for (const leg of l.legs) {
@@ -155,6 +233,26 @@ export class LizardSwarm {
       l.tailPivot.rotation.y = l.running
         ? Math.sin(l.gaitPhase * 0.6) * 0.35
         : Math.sin(performance.now() / 900 + l.yaw) * 0.08;
+
+      l.box.min.set(l.x - HALF_WIDTH, l.visualY, l.z - HALF_WIDTH);
+      l.box.max.set(l.x + HALF_WIDTH, l.visualY + BODY_HEIGHT, l.z + HALF_WIDTH);
     }
+  }
+
+  /** Closest lizard hit by a ray, or null. */
+  raycast(origin: THREE.Vector3, direction: THREE.Vector3): LizardHit | null {
+    const ray = new THREE.Ray(origin, direction.clone().normalize());
+    const hitPt = new THREE.Vector3();
+    let best = Infinity, bestIndex = -1;
+    const bestPt = new THREE.Vector3();
+    for (let i = 0; i < this.lizards.length; i++) {
+      if (this.lizards[i].dead) continue;
+      const result = ray.intersectBox(this.lizards[i].box, hitPt);
+      if (result !== null) {
+        const dist = origin.distanceTo(hitPt);
+        if (dist < best) { best = dist; bestIndex = i; bestPt.copy(hitPt); }
+      }
+    }
+    return bestIndex === -1 ? null : { index: bestIndex, pos: bestPt.clone() };
   }
 }

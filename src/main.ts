@@ -343,6 +343,87 @@ function showDamageNumber(worldPos: THREE.Vector3, zone: number) {
   requestAnimationFrame(() => tick(1 / 60));
 }
 
+// Shoot a lizard → a teal ghost rises out of it with the brand's pitch. Purely
+// a fun easter egg — the lizard dies and respawns elsewhere on the map.
+function spawnLizardGhost(worldPos: THREE.Vector3) {
+  const ndc = worldPos.clone().project(controller.fpCamera.camera);
+  if (ndc.z > 1) return;
+  const sx = (ndc.x + 1) / 2 * window.innerWidth;
+  const sy = (-ndc.y + 1) / 2 * window.innerHeight;
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = [
+    'position:fixed',
+    `left:${sx}px`,
+    `top:${sy}px`,
+    'transform:translate(-50%,-50%)',
+    'display:flex',
+    'flex-direction:column',
+    'align-items:center',
+    'gap:10px',
+    'pointer-events:none',
+    'z-index:9000',
+    'user-select:none',
+  ].join(';');
+
+  const blob = document.createElement('div');
+  blob.style.cssText = [
+    'width:46px',
+    'height:46px',
+    'border-radius:50%',
+    'background:radial-gradient(circle at 35% 30%, rgba(255,255,255,1), rgba(255,255,255,0.65) 60%, rgba(255,255,255,0) 75%)',
+    'box-shadow:0 0 26px rgba(255,255,255,0.9)',
+  ].join(';');
+
+  const brandRow = document.createElement('div');
+  brandRow.style.cssText = 'display:flex;align-items:center;gap:8px';
+  const logo = document.createElement('img');
+  logo.src = '/lizard_logo.png';
+  logo.style.cssText = 'width:26px;height:26px;filter:drop-shadow(0 0 6px rgba(255,255,255,0.9))';
+  const wordmark = document.createElement('div');
+  wordmark.textContent = 'lizard.build';
+  wordmark.style.cssText = [
+    'font-family:Arial,sans-serif',
+    'font-size:20px',
+    'font-weight:800',
+    'color:#ffffff',
+    'text-shadow:0 0 8px rgba(255,255,255,0.9),0 1px 3px #000',
+    'white-space:nowrap',
+  ].join(';');
+  brandRow.appendChild(logo);
+  brandRow.appendChild(wordmark);
+
+  const label = document.createElement('div');
+  label.textContent = 'deploy your app on lizard';
+  label.style.cssText = [
+    'font-family:Arial,sans-serif',
+    'font-size:18px',
+    'font-weight:700',
+    'letter-spacing:0.5px',
+    'color:#ffffff',
+    'text-shadow:0 0 8px rgba(255,255,255,0.9),0 1px 3px #000',
+    'white-space:nowrap',
+  ].join(';');
+
+  wrap.appendChild(blob);
+  wrap.appendChild(brandRow);
+  wrap.appendChild(label);
+  document.body.appendChild(wrap);
+
+  let t = 0;
+  const DURATION = 4.5; // slow, deliberate rise
+  const RISE_PX  = 130;
+  const tick = (dt2: number) => {
+    t += dt2;
+    const p = Math.min(t / DURATION, 1);
+    wrap.style.transform = `translate(-50%, calc(-50% - ${p * RISE_PX}px)) scale(${1 + p * 0.15})`;
+    wrap.style.opacity = String(p < 0.1 ? p / 0.1 : 1 - (p - 0.1) / 0.9);
+    if (p < 1) requestAnimationFrame(() => tick(1 / 60));
+    else wrap.remove();
+  };
+  requestAnimationFrame(() => tick(1 / 60));
+}
+
 // Wire controller shot callback → tracer + bullet hole + crosshair bloom
 controller.onShot = (origin, dirIn) => {
   const dir = dirIn; // no spread — bullets go exactly where the crosshair points
@@ -350,6 +431,13 @@ controller.onShot = (origin, dirIn) => {
   spawnTracer(origin, dir);
   const wallDist = handleShot(origin, dir);
   shootBloom = Math.min(shootBloom + BLOOM_PER_SHOT, 70);
+
+  // Easter egg: shooting a lizard kills it and summons a ghost with the brand's pitch.
+  const lizardHit = lizardSwarm.raycast(origin, dir);
+  if (lizardHit && origin.distanceTo(lizardHit.pos) < wallDist) {
+    spawnLizardGhost(lizardHit.pos);
+    lizardSwarm.die(lizardHit.index);
+  }
 
   // Gun Game: report hit to server only if the player is closer than any wall.
   if (net.connected) {
@@ -842,9 +930,22 @@ const respawnBarEl  = deathScreen.querySelector('#respawn-bar') as HTMLElement;
 let _isDead = false;
 let _respawnCountdown = 0;
 
+// Death cam: collapse (pitch tilts down) then sink straight through the floor,
+// so the player's view is gone well before the death screen finishes fading in.
+let _deathFallT = 0;
+let _deathStartY = 0;
+let _deathStartPitch = 0;
+const DEATH_FALL_DURATION = 0.5;
+const DEATH_SINK_DURATION = 1.2;
+const DEATH_SINK_DEPTH    = 6;
+
 function enterDeathState() {
   _isDead = true;
   _respawnCountdown = 3;
+  _deathFallT = 0;
+  _deathStartY = controller.physics.position.y;
+  _deathStartPitch = controller.fpCamera.pitch;
+  controller.physics.flying = true; // bypass collision so the sink isn't blocked by the floor
   setLocalHp(0);
   deathScreen.style.display = 'flex';
   respawnCdEl.textContent = 'Respawning in 3';
@@ -858,6 +959,8 @@ function enterDeathState() {
 function exitDeathState() {
   _isDead = false;
   _respawnCountdown = 0;
+  controller.physics.flying = false;
+  controller.fpCamera.pitch = 0;
   setLocalHp(MAX_HP);
   deathScreen.style.display = 'none';
 }
@@ -967,6 +1070,21 @@ function tick(now: number) {
 
   controller.update(dt);
   world.update(controller.physics.position);
+
+  // Death cam: overrides whatever normal movement/look just computed, so the
+  // collapse-and-sink plays out the same regardless of residual input.
+  if (_isDead) {
+    _deathFallT += dt;
+    const fallP = Math.min(_deathFallT / DEATH_FALL_DURATION, 1);
+    const eased = 1 - Math.pow(1 - fallP, 3);
+    controller.fpCamera.pitch = _deathStartPitch + (-Math.PI / 2 * 0.92 - _deathStartPitch) * eased;
+    if (_deathFallT > DEATH_FALL_DURATION) {
+      const sinkP = Math.min((_deathFallT - DEATH_FALL_DURATION) / DEATH_SINK_DURATION, 1);
+      controller.physics.position.y = _deathStartY - DEATH_SINK_DEPTH * sinkP;
+      controller.physics.smoothY = controller.physics.position.y;
+    }
+    controller.physics.velocity.set(0, 0, 0);
+  }
 
   // AWP scope — smooth FOV lerp, overlay, and movement blur on reticle
   const scopeLvl = controller.scopeLevel;
