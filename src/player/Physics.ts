@@ -11,7 +11,7 @@
 
 import * as THREE from "three";
 import type { World } from "../world/World";
-import { getNearbyObjectAABBs } from "../world/AllObjectsLoader";
+import { getNearbyObjectOBBs, type ObjectOBB } from "../world/AllObjectsLoader";
 
 const HALF_WIDTH = 0.3;
 const HEIGHT = 1.8;
@@ -34,6 +34,65 @@ const FLY_VERTICAL_SPEED = 15;
 interface AABB {
   minX: number; minY: number; minZ: number;
   maxX: number; maxY: number; maxZ: number;
+}
+
+// SAT (separating-axis theorem) test between the player's axis-aligned box and a
+// custom object's real oriented box. An AABB-vs-AABB test against a rotated object's
+// axis-aligned bounding box would over-block — the AABB of a tilted box always
+// overhangs its true edges. Testing all 15 candidate axes (the box's own 3 faces,
+// the OBB's 3 faces, and their 9 pairwise cross products) is the standard exact
+// box-vs-box test and makes the collidable region match the rendered shape exactly.
+const _satD        = new THREE.Vector3();
+const _satAxis     = new THREE.Vector3();
+const _satAabbHalf = new THREE.Vector3();
+const _WORLD_AXES  = [
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(0, 0, 1),
+];
+
+function satAxisSeparates(
+  axis: THREE.Vector3,
+  aabbCenterX: number, aabbCenterY: number, aabbCenterZ: number,
+  aabbHalf: THREE.Vector3,
+  obb: ObjectOBB,
+): boolean {
+  const lenSq = axis.lengthSq();
+  if (lenSq < 1e-10) return false; // degenerate (parallel) axis — no info, not separating
+  _satAxis.copy(axis).multiplyScalar(1 / Math.sqrt(lenSq));
+
+  _satD.set(obb.center.x - aabbCenterX, obb.center.y - aabbCenterY, obb.center.z - aabbCenterZ);
+  const dist = Math.abs(_satD.dot(_satAxis));
+
+  const r1 =
+    aabbHalf.x * Math.abs(_satAxis.x) +
+    aabbHalf.y * Math.abs(_satAxis.y) +
+    aabbHalf.z * Math.abs(_satAxis.z);
+  const r2 =
+    obb.halfX * Math.abs(_satAxis.dot(obb.axisX)) +
+    obb.halfY * Math.abs(_satAxis.dot(obb.axisY)) +
+    obb.halfZ * Math.abs(_satAxis.dot(obb.axisZ));
+
+  return dist > r1 + r2;
+}
+
+function obbOverlapsAABB(box: AABB, obb: ObjectOBB): boolean {
+  const cx = (box.minX + box.maxX) / 2, cy = (box.minY + box.maxY) / 2, cz = (box.minZ + box.maxZ) / 2;
+  _satAabbHalf.set((box.maxX - box.minX) / 2, (box.maxY - box.minY) / 2, (box.maxZ - box.minZ) / 2);
+
+  for (const ax of _WORLD_AXES) {
+    if (satAxisSeparates(ax, cx, cy, cz, _satAabbHalf, obb)) return false;
+  }
+  const obbAxes = [obb.axisX, obb.axisY, obb.axisZ];
+  for (const ax of obbAxes) {
+    if (satAxisSeparates(ax, cx, cy, cz, _satAabbHalf, obb)) return false;
+  }
+  for (const wa of _WORLD_AXES) {
+    for (const oa of obbAxes) {
+      if (satAxisSeparates(new THREE.Vector3().crossVectors(wa, oa), cx, cy, cz, _satAabbHalf, obb)) return false;
+    }
+  }
+  return true; // no separating axis found on any of the 15 candidates — boxes overlap
 }
 
 
@@ -119,16 +178,11 @@ export class PlayerPhysics {
     }
 
     // Decorative AllObjects entities (car, props) live outside the world.bin
-    // voxel grid — collide against their real world-space bounding boxes
-    // directly (exact overlap, not snapped to voxel cells) so the collidable
-    // region always matches what's rendered, regardless of rotation/scale.
-    const nearby = getNearbyObjectAABBs(box.minX, box.maxX, box.minY, box.maxY, box.minZ, box.maxZ);
-    for (const obj of nearby) {
-      if (box.minX < obj.maxX && box.maxX > obj.minX &&
-          box.minY < obj.maxY && box.maxY > obj.minY &&
-          box.minZ < obj.maxZ && box.maxZ > obj.minZ) {
-        return true;
-      }
+    // voxel grid — collide against their real ORIENTED boxes via SAT, so the
+    // collidable region matches the rendered shape exactly, at any rotation.
+    const nearby = getNearbyObjectOBBs(box.minX, box.maxX, box.minY, box.maxY, box.minZ, box.maxZ);
+    for (const obb of nearby) {
+      if (obbOverlapsAABB(box, obb)) return true;
     }
     return false;
   }

@@ -271,43 +271,61 @@ const NON_SOLID_BLOCKS = new Set([
 // Collision for AllObjects entities (car, decorative props) — these live entirely
 // outside the world.bin voxel grid, so World.isSolid() has no way to see them.
 //
-// The collision volume is each entity's own world-space bounding box — the exact
-// same box the corner-transform produces for rendering — not a voxel-grid
-// approximation. Physics.ts does real continuous AABB-vs-AABB overlap against
-// these boxes directly, so the collidable region always matches what's on screen,
-// whatever the entity's rotation or scale.
+// The collision volume is each entity's real ORIENTED box (center + rotated axes +
+// half-extents) — not an axis-aligned bounding box of it. An AABB necessarily
+// overhangs a rotated object's true edges (that's just geometry: the AABB of a
+// tilted box is always bigger than the box), so anything not perfectly axis-aligned
+// was blocking more space than the model actually occupies. Physics.ts tests real
+// OBB-vs-AABB overlap (SAT) against these directly, so the collidable region
+// matches the rendered shape exactly, at any rotation.
 //
-// A spatial hash (bucket by integer cell) is only a broad-phase index to avoid
-// testing all ~1000 entities every frame — it never affects the actual solidity
-// decision, which is made by getNearbyObjectAABBs' caller doing an exact overlap
-// test against the stored box.
-export interface ObjectAABB {
-  minX: number; minY: number; minZ: number;
-  maxX: number; maxY: number; maxZ: number;
+// A spatial hash (bucket by integer cell, keyed off each OBB's loose world AABB) is
+// only a broad-phase index to avoid testing all ~1000 entities every frame — it
+// never affects the actual solidity decision.
+export interface ObjectOBB {
+  center: THREE.Vector3;
+  axisX: THREE.Vector3; axisY: THREE.Vector3; axisZ: THREE.Vector3; // unit, world-space
+  halfX: number; halfY: number; halfZ: number;
 }
 
-const objectAABBs = new Map<string, ObjectAABB[]>();
+const objectOBBs = new Map<string, ObjectOBB[]>();
 
-export function getNearbyObjectAABBs(
+export function getNearbyObjectOBBs(
   minX: number, maxX: number, minY: number, maxY: number, minZ: number, maxZ: number,
-): ObjectAABB[] {
+): ObjectOBB[] {
   const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-6);
   const y0 = Math.floor(minY), y1 = Math.floor(maxY - 1e-6);
   const z0 = Math.floor(minZ), z1 = Math.floor(maxZ - 1e-6);
-  const seen = new Set<ObjectAABB>();
+  const seen = new Set<ObjectOBB>();
   for (let x = x0; x <= x1; x++) {
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
-        const bucket = objectAABBs.get(`${x},${y},${z}`);
-        if (bucket) for (const aabb of bucket) seen.add(aabb);
+        const bucket = objectOBBs.get(`${x},${y},${z}`);
+        if (bucket) for (const obb of bucket) seen.add(obb);
       }
     }
   }
   return Array.from(seen);
 }
 
+const _pos   = new THREE.Vector3();
+const _quat  = new THREE.Quaternion();
+const _scale = new THREE.Vector3();
 const _aabbCorner = new THREE.Vector3();
-function registerSolidAABB(matrix: THREE.Matrix4) {
+function registerSolidOBB(matrix: THREE.Matrix4) {
+  matrix.decompose(_pos, _quat, _scale);
+  const obb: ObjectOBB = {
+    center: _pos.clone(),
+    axisX: new THREE.Vector3(1, 0, 0).applyQuaternion(_quat),
+    axisY: new THREE.Vector3(0, 1, 0).applyQuaternion(_quat),
+    axisZ: new THREE.Vector3(0, 0, 1).applyQuaternion(_quat),
+    halfX: Math.abs(_scale.x) * 0.5,
+    halfY: Math.abs(_scale.y) * 0.5,
+    halfZ: Math.abs(_scale.z) * 0.5,
+  };
+
+  // Loose world AABB (8-corner transform) — used only to pick which spatial-hash
+  // buckets this OBB gets indexed into, not for the actual collision decision.
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   for (let i = 0; i < 8; i++) {
@@ -320,7 +338,6 @@ function registerSolidAABB(matrix: THREE.Matrix4) {
     minY = Math.min(minY, _aabbCorner.y); maxY = Math.max(maxY, _aabbCorner.y);
     minZ = Math.min(minZ, _aabbCorner.z); maxZ = Math.max(maxZ, _aabbCorner.z);
   }
-  const aabb: ObjectAABB = { minX, minY, minZ, maxX, maxY, maxZ };
 
   const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-6);
   const y0 = Math.floor(minY), y1 = Math.floor(maxY - 1e-6);
@@ -329,9 +346,9 @@ function registerSolidAABB(matrix: THREE.Matrix4) {
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
         const key = `${x},${y},${z}`;
-        let bucket = objectAABBs.get(key);
-        if (!bucket) { bucket = []; objectAABBs.set(key, bucket); }
-        bucket.push(aabb);
+        let bucket = objectOBBs.get(key);
+        if (!bucket) { bucket = []; objectOBBs.set(key, bucket); }
+        bucket.push(obb);
       }
     }
   }
@@ -408,7 +425,7 @@ export async function loadAllObjects(scene: THREE.Scene): Promise<THREE.Instance
         .multiplyMatrices(originMatrix, posMatrix)
         .multiply(displayMatrix);
 
-      if (!NON_SOLID_BLOCKS.has(key)) registerSolidAABB(worldMatrix);
+      if (!NON_SOLID_BLOCKS.has(key)) registerSolidOBB(worldMatrix);
 
       const batchKey = geo.uuid + "|" + mat.uuid;
       let batch = batches.get(batchKey);

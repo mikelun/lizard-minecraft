@@ -7,7 +7,7 @@ import { ModelLayer } from "./world/ModelLayer";
 import { PlayerController } from "./player/Controller";
 import { createHud } from "./ui/hud";
 import { buildBlockTextureAtlas } from "./textures/blockTextures";
-import { loadAllObjects, getNearbyObjectAABBs } from "./world/AllObjectsLoader";
+import { loadAllObjects, getNearbyObjectOBBs } from "./world/AllObjectsLoader";
 import { loadMarketingBanners } from "./world/MarketingBanners";
 import { LizardSwarm } from "./world/LizardCreature";
 import { ChainBlockLayer } from "./world/ChainBlockLayer";
@@ -1133,5 +1133,5 @@ triangles ${tris.toLocaleString()}  draw calls ${calls}`,
 }
 requestAnimationFrame(tick);
 
-(window as any).__game = { controller, renderer, scene, getNearbyObjectAABBs, world, lizardSwarm };
+(window as any).__game = { controller, renderer, scene, getNearbyObjectOBBs, world, lizardSwarm };
 (window as any).__steveRoot = steveRoot;
