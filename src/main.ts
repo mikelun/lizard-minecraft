@@ -854,6 +854,31 @@ function setLocalHp(hp: number) {
   hpFillEl.style.background = pct > 50 ? '#57c455' : pct > 25 ? '#d4913a' : '#c94040';
 }
 
+// ── Connection status (bottom-right, mirrors the HP bar's corner) ──────────
+const connStatusEl = document.createElement('div');
+connStatusEl.style.cssText = `
+  position:fixed;bottom:20px;right:24px;
+  display:flex;align-items:center;gap:7px;
+  font-family:'Arial',sans-serif;font-size:11px;letter-spacing:1.5px;
+  text-transform:uppercase;color:rgba(255,255,255,0.5);
+  pointer-events:none;
+`;
+connStatusEl.innerHTML = `
+  <div id="conn-dot" style="width:7px;height:7px;border-radius:50%;flex-shrink:0"></div>
+  <span id="conn-label"></span>
+`;
+document.getElementById('app')!.appendChild(connStatusEl);
+const connDotEl   = connStatusEl.querySelector('#conn-dot')   as HTMLElement;
+const connLabelEl = connStatusEl.querySelector('#conn-label') as HTMLElement;
+let _lastConnState: boolean | null = null;
+function updateConnStatus() {
+  if (net.connected === _lastConnState) return;
+  _lastConnState = net.connected;
+  connDotEl.style.background = net.connected ? '#57c455' : '#c94040';
+  connDotEl.style.boxShadow  = net.connected ? '0 0 5px #57c455' : '0 0 5px #c94040';
+  connLabelEl.textContent    = net.connected ? 'Connected' : 'Disconnected';
+}
+
 // ── Connecting overlay ─────────────────────────────────────────────────────
 const connectingOverlay = document.createElement('div');
 connectingOverlay.style.cssText = `
@@ -1121,6 +1146,8 @@ function tick(now: number) {
     animator.update(dt);
   }
   lizardSwarm.update(dt, MAP_MIN_X, MAP_MAX_X, MAP_MIN_Z, MAP_MAX_Z);
+
+  updateConnStatus();
 
   // ── Multiplayer: send position + update remote player characters ───────────
   remotePlayers.update(dt);
