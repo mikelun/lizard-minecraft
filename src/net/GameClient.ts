@@ -21,7 +21,8 @@ export type GameEvent =
   | { t: 'win';     id: string }
   | { t: 'reset' }
   | { t: 'respawn'; id: string; x: number; y: number; z: number }
-  | { t: 'hp';      id: string; hp: number };
+  | { t: 'hp';      id: string; hp: number }
+  | { t: 'shot';    id: string; dx: number; dy: number; dz: number };
 
 export class GameClient {
   private _client: ColyseusClient;
@@ -90,6 +91,10 @@ export class GameClient {
         this.onEvent({ t: 'hp', id: msg.id, hp: msg.hp });
       });
 
+      room.onMessage('shot', (msg: any) => {
+        this.onEvent({ t: 'shot', id: msg.id, dx: msg.dx, dy: msg.dy, dz: msg.dz });
+      });
+
       room.onLeave(() => {
         this.connected = false;
         this._room = null;
@@ -116,5 +121,10 @@ export class GameClient {
   sendHit(targetId: string, zone: number) {
     if (!this._room || !this.connected) return;
     this._room.send('hit', { targetId, zone });
+  }
+
+  sendShot(dx: number, dy: number, dz: number) {
+    if (!this._room || !this.connected) return;
+    this._room.send('shot', { dx, dy, dz });
   }
 }

@@ -16,7 +16,7 @@ export interface Hud {
   setScopeBlur(px: number): void;
 }
 
-export function createHud(container: HTMLElement): Hud {
+export function createHud(container: HTMLElement, isMobile = false): Hud {
   const root = document.createElement("div");
   root.style.cssText = "position:fixed;inset:0;pointer-events:none;font-family:monospace;color:#fff;user-select:none;";
   container.appendChild(root);
@@ -69,9 +69,12 @@ export function createHud(container: HTMLElement): Hud {
   root.appendChild(debugText);
 
   // ── Ammo counter (CS:GO style: bottom-right) ──────────────────────────────
+  // On mobile, the touch button cluster (fire/jump/reload) occupies
+  // roughly right:24-184px, bottom:24-196px — sit above all of it instead
+  // of overlapping the fire button like the desktop position would.
   const ammoEl = document.createElement("div");
   ammoEl.style.cssText = `
-    position:absolute;bottom:60px;right:24px;
+    position:absolute;bottom:${isMobile ? 210 : 60}px;right:24px;
     font-family:monospace;color:#fff;text-align:right;
     text-shadow:0 1px 4px #000,0 0 8px #000;
     line-height:1.1;

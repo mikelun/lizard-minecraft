@@ -26,9 +26,14 @@ const HEAD_ZONE = 1.4;   // headshot starts at 1.4m (generous — catches chin/n
 const BODY_ZONE = 0.75;  // body starts at 0.75m
 
 // Render remote players this many seconds behind the latest received snapshot.
-// 100 ms = ~6 ticks at 62 Hz — large enough to absorb typical Wi-Fi/mobile jitter
-// without extrapolating. CS:GO uses ~62-100 ms on most connections.
-const INTERP_DELAY  = 0.100;
+// A fixed 100ms was real, felt input lag on a clean connection (e.g. localhost,
+// where jitter is ~0) — CS:GO's own default adapts to the connection instead of
+// using one constant for everything. Delay now tracks recently observed
+// lag-estimate jitter: near the floor on a clean connection, growing
+// automatically on a noisy one. See computeAdaptiveDelay().
+const MIN_INTERP_DELAY = 0.032; // 2 ticks at 62Hz — floor, matches a LAN/clean connection
+const MAX_INTERP_DELAY = 0.150; // ceiling for a genuinely bad connection
+const LAG_HISTORY_SIZE = 30;    // ~0.5s of ticks at 62Hz
 // Allow up to this fraction past the interpolation window before clamping.
 // 30 % hides a single badly-delayed packet without extrapolating to wild positions.
 const LERP_EXCESS   = 0.30;
@@ -51,6 +56,7 @@ interface Entry {
 
 export class RemotePlayers {
   private map = new Map<string, Entry>();
+  private lagHistory: number[] = [];
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -108,6 +114,10 @@ export class RemotePlayers {
     // falling back to plain arrival-time behavior.
     const clampedLagMs = Math.max(0, Math.min(500, lagMs));
     const t = performance.now() / 1000 - clampedLagMs / 1000;
+
+    this.lagHistory.push(clampedLagMs);
+    if (this.lagHistory.length > LAG_HISTORY_SIZE) this.lagHistory.shift();
+
     for (const p of players) {
       const e = this.map.get(p.id);
       if (!e) { this.add(p); continue; }
@@ -142,10 +152,20 @@ export class RemotePlayers {
     }
   }
 
+  /** Jitter (max-min of recent lag estimates) plus a fixed 2-tick pad, clamped
+   *  to [MIN_INTERP_DELAY, MAX_INTERP_DELAY]. A clean connection (jitter ~0,
+   *  e.g. localhost) settles near the floor instead of always paying the
+   *  worst-case 100ms delay a fixed constant would force on every connection. */
+  private computeAdaptiveDelay(): number {
+    if (this.lagHistory.length < 2) return MIN_INTERP_DELAY;
+    const jitterMs = Math.max(...this.lagHistory) - Math.min(...this.lagHistory);
+    return Math.max(MIN_INTERP_DELAY, Math.min(MAX_INTERP_DELAY, MIN_INTERP_DELAY + jitterMs / 1000));
+  }
+
   /** Per-frame update: interpolate positions CS:GO-style and drive animations. */
   update(dt: number) {
     const now = performance.now() / 1000;
-    const renderTime = now - INTERP_DELAY;
+    const renderTime = now - this.computeAdaptiveDelay();
 
     for (const e of this.map.values()) {
       let x = e.data.x, y = e.data.y, z = e.data.z, yaw = e.data.yaw;
@@ -230,6 +250,14 @@ export class RemotePlayers {
       }
     }
     return { id: bestId, zone: bestZone, pos: bestPt };
+  }
+
+  /** Approximate muzzle/eye position for a remote player, for shot tracers. */
+  getShotOrigin(id: string): THREE.Vector3 | null {
+    const e = this.map.get(id);
+    if (!e) return null;
+    const p = e.steve.root.position;
+    return new THREE.Vector3(p.x, p.y + 1.5, p.z);
   }
 
   /** Hide a player's Steve immediately (called when they die). */

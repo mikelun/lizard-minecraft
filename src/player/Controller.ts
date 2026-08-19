@@ -277,12 +277,16 @@ export class PlayerController {
       if (fired) this.scopeLevel = 0; // AWP unscopes after each shot
       if (fired && this.onShot) {
         const eye = this.eyePosition();
-        // Bullet goes exactly where the crosshair pointed at the moment of fire.
-        // No spread, no punch offset — punch is visual-only (camera/model kick).
+        // Bullet follows the recoil-punched aim (matches where the camera/gun
+        // visually points, including this shot's own kick — fire() above
+        // already added it to ak47.punchPitch/punchYaw before this runs), not
+        // the pre-recoil base aim. No random spread on top of that: recoil
+        // climb is a deterministic pattern you compensate for by pulling the
+        // mouse down, not scatter.
         const dir = new THREE.Vector3(0, 0, -1)
           .applyEuler(new THREE.Euler(
-            this.fpCamera.pitch,
-            this.fpCamera.yaw,
+            this.fpCamera.pitch + this.ak47.punchPitch,
+            this.fpCamera.yaw   + this.ak47.punchYaw,
             0, "YXZ",
           ));
         this.onShot(eye, dir);

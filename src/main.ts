@@ -435,6 +435,9 @@ controller.onShot = (origin, dirIn) => {
   const wallDist = handleShot(origin, dir);
   shootBloom = Math.min(shootBloom + BLOOM_PER_SHOT, 70);
 
+  // Let other players see this shot too — cosmetic-only relay, no hit detection.
+  net.sendShot(dir.x, dir.y, dir.z);
+
   // Easter egg: shooting a lizard kills it and summons a ghost with the brand's pitch.
   const lizardHit = lizardSwarm.raycast(origin, dir);
   if (lizardHit && origin.distanceTo(lizardHit.pos) < wallDist) {
@@ -738,7 +741,7 @@ if (controller.isMobile) {
 }
 
 // ── HUD ──────────────────────────────────────────────────────────────────────
-const hud = createHud(app);
+const hud = createHud(app, controller.isMobile);
 
 window.addEventListener("resize", () => {
   controller.camera.aspect = window.innerWidth / window.innerHeight;
@@ -999,6 +1002,9 @@ net.onEvent = ev => {
     }
   } else if (ev.t === 'hp') {
     if (ev.id === net.localId) setLocalHp(ev.hp);
+  } else if (ev.t === 'shot') {
+    const origin = remotePlayers.getShotOrigin(ev.id);
+    if (origin) spawnTracer(origin, new THREE.Vector3(ev.dx, ev.dy, ev.dz));
   }
 };
 

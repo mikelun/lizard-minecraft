@@ -7,9 +7,9 @@ const PORT      = parseInt(process.env.PORT || '9001', 10);
 const TICK_MS   = 16; // ~62 Hz
 
 const SPAWNS: [number, number, number][] = [
-  [-12, 5, 46], [-10, 5, 44], [-8,  5, 42],
-  [-14, 5, 48], [-6,  5, 40], [-16, 5, 44],
-  [-10, 5, 50], [-4,  5, 46], [-12, 5, 38], [-8, 5, 54],
+  [-9.758, 5.00, 43.87],
+  [-11.154, 5.00, 66],
+  [-8.7, 7.00, 92.045],
 ];
 
 // slot indices matching client's TIER_GUNS array
@@ -62,6 +62,12 @@ class GameRoom extends Room<GameState> {
     this.onMessage('position', (client: Client, msg: { x: number; y: number; z: number; yaw: number }) => {
       const p = this.state.players.get(client.sessionId);
       if (p && !p.dead) { p.x = msg.x; p.y = msg.y; p.z = msg.z; p.yaw = msg.yaw; }
+    });
+
+    // Cosmetic-only relay so other clients can render a tracer for this shot —
+    // no server-side effect, hit detection is a separate 'hit' message.
+    this.onMessage('shot', (client: Client, msg: { dx: number; dy: number; dz: number }) => {
+      this.broadcast('shot', { id: client.sessionId, dx: msg.dx, dy: msg.dy, dz: msg.dz }, { except: client });
     });
 
     this.onMessage('hit', (client: Client, msg: { targetId: string; zone: number }) => {
