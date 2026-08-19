@@ -885,30 +885,46 @@ controller.physics.flying  = true;
 controller.physics.velocity.set(0, 0, 0);
 
 // ── Mobile fullscreen prompt ────────────────────────────────────────────────
-// Browsers only grant the Fullscreen API in response to a real user gesture —
-// it can't be requested on page load. Chrome on Android honors this
-// reliably; iOS Safari added Fullscreen API support for regular elements in
-// 16.4+ and silently no-ops on older versions (falls back to whatever the
-// browser chrome normally does — no worse than before).
-if (controller.isMobile) {
+// iOS Safari has NO code path to real fullscreen for a page opened directly
+// in the browser — Element.requestFullscreen() for non-video elements is
+// deliberately disabled there (WebKit bug 212934, marked WONTFIX; briefly
+// enabled in an iOS 17.4 beta, then explicitly disabled again before
+// release). The only way to get a truly fullscreen iPhone experience is
+// "Add to Home Screen" (apple-mobile-web-app-capable, set in index.html) —
+// launched from that icon, the page opens fullscreen automatically with no
+// JS needed. So: on iOS, tell the user that instead of showing a
+// "tap to play" button that would silently fail to do anything. Everywhere
+// else (Android Chrome, iPad, desktop) requestFullscreen() from a real tap
+// genuinely works — keep using it there.
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+const isStandalone = (navigator as any).standalone === true
+  || window.matchMedia('(display-mode: standalone)').matches;
+
+if (controller.isMobile && !isStandalone) {
   const fsPrompt = document.createElement('div');
   fsPrompt.style.cssText = `
     position:fixed;inset:0;background:#0d0e10;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;z-index:600;
-    font-family:'Arial',sans-serif;gap:16px;touch-action:none;
+    align-items:center;justify-content:center;z-index:600;text-align:center;padding:0 32px;
+    font-family:'Arial',sans-serif;gap:16px;touch-action:none;box-sizing:border-box;
   `;
-  fsPrompt.innerHTML = `
-    <div style="font-size:24px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#fff">LIZARD</div>
-    <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.45)">Tap to play</div>
-  `;
+  fsPrompt.innerHTML = isIOS
+    ? `
+      <div style="font-size:24px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#fff">LIZARD</div>
+      <div style="font-size:12px;line-height:1.8;letter-spacing:0.5px;color:rgba(255,255,255,0.55)">
+        For fullscreen: tap Share <span style="color:#fff">⎋</span> → Add to Home Screen,<br>then open from there.
+      </div>
+      <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.3);margin-top:8px">Tap to continue without it</div>
+    `
+    : `
+      <div style="font-size:24px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#fff">LIZARD</div>
+      <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.45)">Tap to play</div>
+    `;
   document.getElementById('app')!.appendChild(fsPrompt);
 
   const enterFullscreen = () => {
-    const el = document.documentElement as HTMLElement & {
-      webkitRequestFullscreen?: () => Promise<void> | void;
-    };
-    const request = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el);
-    request?.()?.catch?.(() => {});
+    if (!isIOS && document.fullscreenEnabled) {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+    }
     fsPrompt.remove();
   };
   fsPrompt.addEventListener('touchend', (e) => { e.preventDefault(); enterFullscreen(); }, { passive: false });
