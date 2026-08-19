@@ -76,14 +76,19 @@ function makeBannerTexture(logoUrl: string): Promise<THREE.CanvasTexture> {
 
 // ── banner placements ──────────────────────────────────────────────────────
 //
-// Positions came from a terrain scan (world.bin.gz) — each entry sits exactly
-// one voxel in front of a solid wall face.  rotY convention:
+// Positions were re-derived by decoding public/world/world.bin (MCBIN002)
+// directly and scanning for 4-wide × 2-tall flush walls (real full-cube
+// material only — excludes bars/panes/fences/doors/trapdoors/stairs/slabs/
+// leaves/water) with 3+ blocks of open air in front, so every banner now
+// actually sits flat against a solid wall face instead of floating in open
+// space (the old hand-picked coordinates predated a world regen and no
+// longer lined up with any wall). rotY convention:
 //   0          → normal +Z  (players at Z+ look toward -Z and see it)
 //   Math.PI    → normal -Z
 //  -Math.PI/2  → normal +X
 //   Math.PI/2  → normal -X
 //
-// Areas covered: T spawn, mid-T corridor, mid, Long/A, B-tunnels, CT side.
+// Spread across the map via farthest-point sampling (min 15-block spacing).
 
 interface BannerDef {
   pos:  [number, number, number];
@@ -91,22 +96,14 @@ interface BannerDef {
 }
 
 const BANNERS: BannerDef[] = [
-  // T-spawn back wall — faces players heading into the map
-  { pos: [-30, 10, 16.05], rotY: 0 },
-  // T-spawn side corridor
-  { pos: [-20, 9, 20.95], rotY: Math.PI },
-  // Mid-T approach
-  { pos: [-10, 9, 40.95], rotY: Math.PI },
-  // Mid centre (tall wall, north face)
-  { pos: [0, 12, 62.95],  rotY: Math.PI },
-  // Long / A-long inner wall
-  { pos: [11, 12, 29.95], rotY: Math.PI },
-  // A-site far wall
-  { pos: [30, 12, 5.05],  rotY: 0 },
-  // B-tunnels / B-site
-  { pos: [20, 9, 81.95],  rotY: Math.PI },
-  // CT corridor
-  { pos: [50, 8, 70.95],  rotY: Math.PI },
+  { pos: [15.50, 9, 4.95],   rotY: Math.PI },
+  { pos: [-23.95, 9, 87.50], rotY: Math.PI / 2 },
+  { pos: [50.50, 10, 70.05], rotY: 0 },
+  { pos: [-28.05, 10, 34.50], rotY: -Math.PI / 2 },
+  { pos: [10.50, 11, 53.05], rotY: 0 },
+  { pos: [46.05, 9, 27.50],  rotY: Math.PI / 2 },
+  { pos: [19.50, 9, 87.05],  rotY: 0 },
+  { pos: [-12.50, 10, 10.05], rotY: 0 },
 ];
 
 // ── public API ─────────────────────────────────────────────────────────────
@@ -119,7 +116,7 @@ export async function loadMarketingBanners(scene: THREE.Scene): Promise<void> {
 
   const mat = new THREE.MeshBasicMaterial({
     map:         texture,
-    side:        THREE.FrontSide, // back is physical wall — no mirrored text
+    side:        THREE.DoubleSide,
     transparent: false,
     depthWrite:  true,
   });
