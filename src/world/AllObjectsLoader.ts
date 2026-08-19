@@ -268,32 +268,46 @@ const NON_SOLID_BLOCKS = new Set([
   "potted_flowering_azalea_bush", "light",
 ]);
 
-// Voxelized collision footprint for every solid AllObjects entity, so Physics.ts
-// can block movement through the car/props the same way it blocks movement
-// through terrain — these entities live entirely outside the world.bin voxel
-// grid, so World.isSolid() has no way to see them on its own.
-const objectSolidCells = new Set<string>();
-
-export function isObjectSolidCell(x: number, y: number, z: number): boolean {
-  return objectSolidCells.has(`${x},${y},${z}`);
+// Collision for AllObjects entities (car, decorative props) — these live entirely
+// outside the world.bin voxel grid, so World.isSolid() has no way to see them.
+//
+// The collision volume is each entity's own world-space bounding box — the exact
+// same box the corner-transform produces for rendering — not a voxel-grid
+// approximation. Physics.ts does real continuous AABB-vs-AABB overlap against
+// these boxes directly, so the collidable region always matches what's on screen,
+// whatever the entity's rotation or scale.
+//
+// A spatial hash (bucket by integer cell) is only a broad-phase index to avoid
+// testing all ~1000 entities every frame — it never affects the actual solidity
+// decision, which is made by getNearbyObjectAABBs' caller doing an exact overlap
+// test against the stored box.
+export interface ObjectAABB {
+  minX: number; minY: number; minZ: number;
+  maxX: number; maxY: number; maxZ: number;
 }
 
-// Marks the cells a rotated/scaled entity ACTUALLY overlaps, not just the axis-aligned
-// bounding box of its rotated corners (which badly over-blocks anything rotated
-// off-axis — its AABB can cover several times the entity's real footprint) and not
-// just cells whose exact center falls inside it (which under-blocks anything smaller
-// than a full block — many decorative block_display props are scaled well below 1,
-// so their box can slip entirely between cell centers and never get marked at all).
-//
-// Real box-box overlap: for each candidate cell (found via the world-space AABB,
-// cheap to compute), transform the cell's 8 corners into the entity's local unit-cube
-// space and check whether that local range overlaps [-0.5,0.5]^3. This marks a cell
-// solid whenever ANY part of it touches the true rotated/scaled box — matching what's
-// on screen — without inflating to the loose world-space AABB.
-const _aabbCorner  = new THREE.Vector3();
-const _cellCorner  = new THREE.Vector3();
-const _invMatrix   = new THREE.Matrix4();
-function markSolidAABB(matrix: THREE.Matrix4) {
+const objectAABBs = new Map<string, ObjectAABB[]>();
+
+export function getNearbyObjectAABBs(
+  minX: number, maxX: number, minY: number, maxY: number, minZ: number, maxZ: number,
+): ObjectAABB[] {
+  const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-6);
+  const y0 = Math.floor(minY), y1 = Math.floor(maxY - 1e-6);
+  const z0 = Math.floor(minZ), z1 = Math.floor(maxZ - 1e-6);
+  const seen = new Set<ObjectAABB>();
+  for (let x = x0; x <= x1; x++) {
+    for (let y = y0; y <= y1; y++) {
+      for (let z = z0; z <= z1; z++) {
+        const bucket = objectAABBs.get(`${x},${y},${z}`);
+        if (bucket) for (const aabb of bucket) seen.add(aabb);
+      }
+    }
+  }
+  return Array.from(seen);
+}
+
+const _aabbCorner = new THREE.Vector3();
+function registerSolidAABB(matrix: THREE.Matrix4) {
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   for (let i = 0; i < 8; i++) {
@@ -306,31 +320,18 @@ function markSolidAABB(matrix: THREE.Matrix4) {
     minY = Math.min(minY, _aabbCorner.y); maxY = Math.max(maxY, _aabbCorner.y);
     minZ = Math.min(minZ, _aabbCorner.z); maxZ = Math.max(maxZ, _aabbCorner.z);
   }
+  const aabb: ObjectAABB = { minX, minY, minZ, maxX, maxY, maxZ };
+
   const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-6);
   const y0 = Math.floor(minY), y1 = Math.floor(maxY - 1e-6);
   const z0 = Math.floor(minZ), z1 = Math.floor(maxZ - 1e-6);
-
-  _invMatrix.copy(matrix).invert();
   for (let x = x0; x <= x1; x++) {
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
-        let lMinX = Infinity, lMinY = Infinity, lMinZ = Infinity;
-        let lMaxX = -Infinity, lMaxY = -Infinity, lMaxZ = -Infinity;
-        for (let c = 0; c < 8; c++) {
-          _cellCorner.set(
-            x + ((c & 1) ? 1 : 0),
-            y + ((c & 2) ? 1 : 0),
-            z + ((c & 4) ? 1 : 0),
-          ).applyMatrix4(_invMatrix);
-          lMinX = Math.min(lMinX, _cellCorner.x); lMaxX = Math.max(lMaxX, _cellCorner.x);
-          lMinY = Math.min(lMinY, _cellCorner.y); lMaxY = Math.max(lMaxY, _cellCorner.y);
-          lMinZ = Math.min(lMinZ, _cellCorner.z); lMaxZ = Math.max(lMaxZ, _cellCorner.z);
-        }
-        const overlaps =
-          lMaxX >= -0.5 && lMinX <= 0.5 &&
-          lMaxY >= -0.5 && lMinY <= 0.5 &&
-          lMaxZ >= -0.5 && lMinZ <= 0.5;
-        if (overlaps) objectSolidCells.add(`${x},${y},${z}`);
+        const key = `${x},${y},${z}`;
+        let bucket = objectAABBs.get(key);
+        if (!bucket) { bucket = []; objectAABBs.set(key, bucket); }
+        bucket.push(aabb);
       }
     }
   }
@@ -407,7 +408,7 @@ export async function loadAllObjects(scene: THREE.Scene): Promise<THREE.Instance
         .multiplyMatrices(originMatrix, posMatrix)
         .multiply(displayMatrix);
 
-      if (!NON_SOLID_BLOCKS.has(key)) markSolidAABB(worldMatrix);
+      if (!NON_SOLID_BLOCKS.has(key)) registerSolidAABB(worldMatrix);
 
       const batchKey = geo.uuid + "|" + mat.uuid;
       let batch = batches.get(batchKey);

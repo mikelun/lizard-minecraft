@@ -11,7 +11,7 @@
 
 import * as THREE from "three";
 import type { World } from "../world/World";
-import { isObjectSolidCell } from "../world/AllObjectsLoader";
+import { getNearbyObjectAABBs } from "../world/AllObjectsLoader";
 
 const HALF_WIDTH = 0.3;
 const HEIGHT = 1.8;
@@ -93,9 +93,6 @@ export class PlayerPhysics {
    *  Y extent is [boxMinY, boxMaxY].  Bottom slabs occupy only the lower half
    *  of their voxel; top slabs occupy only the upper half. */
   private blockSolid(bx: number, by: number, bz: number, boxMinY: number, boxMaxY: number): boolean {
-    // Decorative AllObjects entities (car, props) live outside the world.bin
-    // voxel grid entirely, so they're checked first as plain full-cube solids.
-    if (isObjectSolidCell(bx, by, bz)) return true;
     const id = this.world.getBlock(bx, by, bz);
     if (id === 0) return false;
     // Bottom slabs: IDs 38-44 — solid region is by..by+0.5
@@ -118,6 +115,19 @@ export class PlayerPhysics {
         for (let z = z0; z <= z1; z++) {
           if (this.blockSolid(x, y, z, box.minY, box.maxY)) return true;
         }
+      }
+    }
+
+    // Decorative AllObjects entities (car, props) live outside the world.bin
+    // voxel grid — collide against their real world-space bounding boxes
+    // directly (exact overlap, not snapped to voxel cells) so the collidable
+    // region always matches what's rendered, regardless of rotation/scale.
+    const nearby = getNearbyObjectAABBs(box.minX, box.maxX, box.minY, box.maxY, box.minZ, box.maxZ);
+    for (const obj of nearby) {
+      if (box.minX < obj.maxX && box.maxX > obj.minX &&
+          box.minY < obj.maxY && box.maxY > obj.minY &&
+          box.minZ < obj.maxZ && box.maxZ > obj.minZ) {
+        return true;
       }
     }
     return false;
