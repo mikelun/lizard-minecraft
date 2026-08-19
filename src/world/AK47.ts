@@ -219,13 +219,19 @@ export class AK47 {
       return false;
     }
 
-    // Apply recoil — the first shot in a burst stays level (matches SPRAY_PATTERN's
-    // own index-0 entry, which is [0,0]); climb starts from the second shot on.
+    // Apply recoil — every shot kicks the camera/gun model for visual feedback.
+    // (Controller.ts keeps the FIRST shot's bullet level by reading punchPitch/
+    // punchYaw BEFORE calling fire(), not by skipping the kick itself here —
+    // shotIndex resets on its own recovery timer independent of "is this
+    // really the first shot of a fresh trigger pull," so gating on it here
+    // produced wildly different, wrong behavior per weapon: e.g. the AWP's
+    // 1.25s recoilCooldownS is close to its 1.4s fire interval, so shotIndex
+    // was back to 0 before nearly every single shot, silencing recoil
+    // entirely; a fast-tapped Deagle accumulated across separate trigger
+    // pulls instead, only becoming visible a few taps in.)
     if (this.punchPerShot) {
-      if (this.shotIndex > 0) {
-        this.punchYaw   += this.punchPerShot[0];
-        this.punchPitch += this.punchPerShot[1];
-      }
+      this.punchYaw   += this.punchPerShot[0];
+      this.punchPitch += this.punchPerShot[1];
       this.modelKickYaw = 0;
     } else {
       const idx = Math.min(this.shotIndex, SPRAY_PATTERN.length - 1);

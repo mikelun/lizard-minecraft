@@ -273,20 +273,24 @@ export class PlayerController {
     // AK-47: full-auto fire while mouse held
     this.ak47.update(dt);
     if (this.mouseHeld && (this.locked || this.isMobile)) {
+      // Snapshot punch BEFORE firing: the bullet follows the recoil accumulated
+      // from PREVIOUS shots, not this shot's own kick — so a fresh trigger pull
+      // (no prior punch) always fires level, while the camera/gun still kick
+      // immediately on every shot (fire() below updates punch for rendering
+      // and for the NEXT shot's bullet). This is the standard "recoil climb
+      // affects your next shot" model, and — unlike gating on shotIndex, tried
+      // earlier — doesn't depend on the weapon's specific recovery-timer
+      // tuning to behave consistently.
+      const prePunchPitch = this.ak47.punchPitch;
+      const prePunchYaw   = this.ak47.punchYaw;
       const fired = this.ak47.fire();
       if (fired) this.scopeLevel = 0; // AWP unscopes after each shot
       if (fired && this.onShot) {
         const eye = this.eyePosition();
-        // Bullet follows the recoil-punched aim (matches where the camera/gun
-        // visually points, including this shot's own kick — fire() above
-        // already added it to ak47.punchPitch/punchYaw before this runs), not
-        // the pre-recoil base aim. No random spread on top of that: recoil
-        // climb is a deterministic pattern you compensate for by pulling the
-        // mouse down, not scatter.
         const dir = new THREE.Vector3(0, 0, -1)
           .applyEuler(new THREE.Euler(
-            this.fpCamera.pitch + this.ak47.punchPitch,
-            this.fpCamera.yaw   + this.ak47.punchYaw,
+            this.fpCamera.pitch + prePunchPitch,
+            this.fpCamera.yaw   + prePunchYaw,
             0, "YXZ",
           ));
         this.onShot(eye, dir);
