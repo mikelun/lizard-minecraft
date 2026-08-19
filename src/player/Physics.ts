@@ -11,6 +11,7 @@
 
 import * as THREE from "three";
 import type { World } from "../world/World";
+import { isObjectSolidCell } from "../world/AllObjectsLoader";
 
 const HALF_WIDTH = 0.3;
 const HEIGHT = 1.8;
@@ -92,6 +93,9 @@ export class PlayerPhysics {
    *  Y extent is [boxMinY, boxMaxY].  Bottom slabs occupy only the lower half
    *  of their voxel; top slabs occupy only the upper half. */
   private blockSolid(bx: number, by: number, bz: number, boxMinY: number, boxMaxY: number): boolean {
+    // Decorative AllObjects entities (car, props) live outside the world.bin
+    // voxel grid entirely, so they're checked first as plain full-cube solids.
+    if (isObjectSolidCell(bx, by, bz)) return true;
     const id = this.world.getBlock(bx, by, bz);
     if (id === 0) return false;
     // Bottom slabs: IDs 38-44 — solid region is by..by+0.5

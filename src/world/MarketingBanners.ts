@@ -98,11 +98,11 @@ interface BannerDef {
 const BANNERS: BannerDef[] = [
   { pos: [15.50, 9, 4.95],   rotY: Math.PI },
   { pos: [-23.95, 9, 87.50], rotY: Math.PI / 2 },
-  { pos: [50.50, 10, 70.05], rotY: 0 },
+  { pos: [45.50, 12, 70.05], rotY: 0 },
   { pos: [-28.05, 10, 34.50], rotY: -Math.PI / 2 },
   { pos: [10.50, 11, 53.05], rotY: 0 },
   { pos: [46.05, 9, 27.50],  rotY: Math.PI / 2 },
-  { pos: [19.50, 9, 87.05],  rotY: 0 },
+  { pos: [19.50, 11, 87.05], rotY: 0 },
   { pos: [-12.50, 10, 10.05], rotY: 0 },
 ];
 

@@ -261,6 +261,49 @@ const crossGeo = buildCrossGeo();
 
 const CROSS_BLOCKS = new Set(["iron_bars", "glass_pane", "dead_bush"]);
 
+// Thin/decorative blocks a player should still be able to walk through,
+// matching vanilla Minecraft (plants, potted foliage, light fixtures).
+const NON_SOLID_BLOCKS = new Set([
+  "dead_bush", "tall_seagrass", "potted_jungle_sapling",
+  "potted_flowering_azalea_bush", "light",
+]);
+
+// Voxelized collision footprint for every solid AllObjects entity, so Physics.ts
+// can block movement through the car/props the same way it blocks movement
+// through terrain — these entities live entirely outside the world.bin voxel
+// grid, so World.isSolid() has no way to see them on its own.
+const objectSolidCells = new Set<string>();
+
+export function isObjectSolidCell(x: number, y: number, z: number): boolean {
+  return objectSolidCells.has(`${x},${y},${z}`);
+}
+
+const _aabbCorner = new THREE.Vector3();
+function markSolidAABB(matrix: THREE.Matrix4) {
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    _aabbCorner.set(
+      (i & 1) ? 0.5 : -0.5,
+      (i & 2) ? 0.5 : -0.5,
+      (i & 4) ? 0.5 : -0.5,
+    ).applyMatrix4(matrix);
+    minX = Math.min(minX, _aabbCorner.x); maxX = Math.max(maxX, _aabbCorner.x);
+    minY = Math.min(minY, _aabbCorner.y); maxY = Math.max(maxY, _aabbCorner.y);
+    minZ = Math.min(minZ, _aabbCorner.z); maxZ = Math.max(maxZ, _aabbCorner.z);
+  }
+  const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-6);
+  const y0 = Math.floor(minY), y1 = Math.floor(maxY - 1e-6);
+  const z0 = Math.floor(minZ), z1 = Math.floor(maxZ - 1e-6);
+  for (let x = x0; x <= x1; x++) {
+    for (let y = y0; y <= y1; y++) {
+      for (let z = z0; z <= z1; z++) {
+        objectSolidCells.add(`${x},${y},${z}`);
+      }
+    }
+  }
+}
+
 function computeDisplayMatrix(transform: DisplayTransform): THREE.Matrix4 {
   const { translation, left_rotation, right_rotation, scale } = transform;
   const rrQ = new THREE.Quaternion(
@@ -331,6 +374,8 @@ export async function loadAllObjects(scene: THREE.Scene): Promise<THREE.Instance
       const worldMatrix = new THREE.Matrix4()
         .multiplyMatrices(originMatrix, posMatrix)
         .multiply(displayMatrix);
+
+      if (!NON_SOLID_BLOCKS.has(key)) markSolidAABB(worldMatrix);
 
       const batchKey = geo.uuid + "|" + mat.uuid;
       let batch = batches.get(batchKey);

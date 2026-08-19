@@ -17,20 +17,11 @@ function makeHoleTexture(): THREE.Texture {
   const ctx = canvas.getContext("2d")!;
   const r = S / 2;
 
-  // Scorched / burnt rim
-  const rim = ctx.createRadialGradient(r, r, r * 0.28, r, r, r * 0.98);
-  rim.addColorStop(0,    "rgba(0,0,0,0)");
-  rim.addColorStop(0.45, "rgba(20,10,3,0.35)");
-  rim.addColorStop(0.78, "rgba(35,20,6,0.55)");
-  rim.addColorStop(1.0,  "rgba(0,0,0,0)");
-  ctx.fillStyle = rim;
-  ctx.fillRect(0, 0, S, S);
-
-  // Dark hole
-  const hole = ctx.createRadialGradient(r, r, 0, r, r, r * 0.44);
-  hole.addColorStop(0,    "rgba(0,0,0,0.97)");
-  hole.addColorStop(0.65, "rgba(4,2,1,0.88)");
-  hole.addColorStop(1.0,  "rgba(0,0,0,0)");
+  // Plain black circle — solid center, soft-fading edge so it isn't a hard disc.
+  const hole = ctx.createRadialGradient(r, r, 0, r, r, r * 0.48);
+  hole.addColorStop(0,   "rgba(0,0,0,0.97)");
+  hole.addColorStop(0.8, "rgba(0,0,0,0.97)");
+  hole.addColorStop(1.0, "rgba(0,0,0,0)");
   ctx.fillStyle = hole;
   ctx.beginPath();
   ctx.arc(r, r, r * 0.48, 0, Math.PI * 2);

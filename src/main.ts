@@ -7,8 +7,9 @@ import { ModelLayer } from "./world/ModelLayer";
 import { PlayerController } from "./player/Controller";
 import { createHud } from "./ui/hud";
 import { buildBlockTextureAtlas } from "./textures/blockTextures";
-import { loadAllObjects } from "./world/AllObjectsLoader";
+import { loadAllObjects, isObjectSolidCell } from "./world/AllObjectsLoader";
 import { loadMarketingBanners } from "./world/MarketingBanners";
+import { LizardSwarm } from "./world/LizardCreature";
 import { ChainBlockLayer } from "./world/ChainBlockLayer";
 import { SlabLayer } from "./world/SlabLayer";
 import { CrossPostLayer } from "./world/CrossPostLayer";
@@ -85,6 +86,12 @@ await world.loadBin();
 
 const allObjectMeshes = await loadAllObjects(scene);
 await loadMarketingBanners(scene);
+
+// ── Ambient wildlife: teal voxel lizards wandering the map ────────────────
+const MAP_MIN_X = -40, MAP_MAX_X = 60;
+const MAP_MIN_Z = 0,   MAP_MAX_Z = 90;
+const lizardSwarm = new LizardSwarm(scene, world);
+lizardSwarm.spawn(16, MAP_MIN_X, MAP_MAX_X, MAP_MIN_Z, MAP_MAX_Z);
 
 const controller = new PlayerController(
   world,
@@ -660,12 +667,6 @@ steveT.equipArmor("/marbled/military_armor.geo.json", "/marbled/desert_military_
 steveT.startWeaponCycle([...BOT_WEAPONS.slice(3), ...BOT_WEAPONS.slice(0, 3)], 5);
 steveT.aiming = true;
 
-// ── Block outline ────────────────────────────────────────────────────────────
-const outlineGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.002, 1.002, 1.002));
-const outline = new THREE.LineSegments(outlineGeo, new THREE.LineBasicMaterial({ color: 0x000000 }));
-outline.visible = false;
-scene.add(outline);
-
 // ── Mobile controls (touch devices only) ─────────────────────────────────────
 let mobileControls: MobileControls | null = null;
 if (controller.isMobile) {
@@ -1039,6 +1040,8 @@ function tick(now: number) {
   const steveTDz = controller.physics.position.z - steveT.root.position.z;
   steveT.update(dt, true, Math.atan2(-steveTDx, -steveTDz));
 
+  lizardSwarm.update(dt, MAP_MIN_X, MAP_MAX_X, MAP_MIN_Z, MAP_MAX_Z);
+
   // ── Multiplayer: send position + update remote player characters ───────────
   remotePlayers.update(dt);
   _netTimer -= dt;
@@ -1057,18 +1060,6 @@ function tick(now: number) {
   );
   kickQuaternion.setFromEuler(kickEuler.set(ak.modelKickPitch * 0.4, 0, ak.reloadRollZ));
   activeSlot.container.quaternion.multiplyQuaternions(kickQuaternion, activeSlot.baseQuat);
-
-  // Block outline
-  if (controller.targetBlock) {
-    outline.visible = true;
-    outline.position.set(
-      controller.targetBlock.position.x + 0.5,
-      controller.targetBlock.position.y + 0.5,
-      controller.targetBlock.position.z + 0.5,
-    );
-  } else {
-    outline.visible = false;
-  }
 
   // Update tracers
   for (const t of tracerPool) {
@@ -1142,5 +1133,5 @@ triangles ${tris.toLocaleString()}  draw calls ${calls}`,
 }
 requestAnimationFrame(tick);
 
-(window as any).__game = { controller, renderer, scene };
+(window as any).__game = { controller, renderer, scene, isObjectSolidCell, world, lizardSwarm };
 (window as any).__steveRoot = steveRoot;
