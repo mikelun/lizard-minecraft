@@ -95,9 +95,19 @@ export class RemotePlayers {
     e.snaps = [{ x, y, z, yaw: e.data.yaw, t, vx: 0, vy: 0, vz: 0 }];
   }
 
-  /** Apply ~62 Hz position + tier updates from binary tick. */
-  applyTick(players: RemotePlayerData[]) {
-    const t = performance.now() / 1000;
+  /** Apply ~62 Hz position + tier updates from binary tick.
+   *  lagMs (client Date.now() minus the server's Date.now() at broadcast time)
+   *  places this snapshot on OUR performance.now() timeline using the server's
+   *  actual tick-generation time rather than raw arrival time — ticks are
+   *  evenly spaced 16ms apart on the server even when bursty delivery makes
+   *  their arrival times uneven, which otherwise reads as jitter here. */
+  applyTick(players: RemotePlayerData[], lagMs: number) {
+    // Clamp against client/server clock skew (real on separate machines) and
+    // one-off spikes — a negative or huge lag estimate would place the
+    // snapshot in the future or absurdly far in the past instead of just
+    // falling back to plain arrival-time behavior.
+    const clampedLagMs = Math.max(0, Math.min(500, lagMs));
+    const t = performance.now() / 1000 - clampedLagMs / 1000;
     for (const p of players) {
       const e = this.map.get(p.id);
       if (!e) { this.add(p); continue; }

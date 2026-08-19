@@ -9,13 +9,15 @@ import type { PlayerController } from "../player/Controller";
 const JRAD = 70;    // joystick outer radius (px) — keep in sync with Controller.ts
 const KNOB_R = 26;  // joystick knob radius (px)
 
+// Glassmorphism buttons — translucent blurred glass with a colored accent ring
+// per role, an inset highlight for depth, and a pressed state that brightens
+// the glow and scales down slightly for tactile feedback.
 function circle(
   right: string | null,
   left: string | null,
   bottom: string,
   size: number,
-  bg: string,
-  border: string,
+  accent: string, // "r,g,b" — drives border/glow/press-state color
   label: string,
   fontSize = 13,
 ): HTMLDivElement {
@@ -29,23 +31,40 @@ function circle(
     `width:${size}px`,
     `height:${size}px`,
     "border-radius:50%",
-    `background:${bg}`,
-    `border:2px solid ${border}`,
+    `background:radial-gradient(circle at 32% 28%, rgba(255,255,255,0.16), rgba(18,19,22,0.6) 72%)`,
+    "backdrop-filter:blur(8px)",
+    "-webkit-backdrop-filter:blur(8px)",
+    `border:1.5px solid rgba(${accent},0.55)`,
+    `box-shadow:0 4px 16px rgba(0,0,0,0.4),inset 0 1px 1px rgba(255,255,255,0.18),0 0 10px rgba(${accent},0.25)`,
     "pointer-events:auto",
     "display:flex",
     "align-items:center",
     "justify-content:center",
-    "font-family:monospace",
+    "font-family:Arial,sans-serif",
     "color:#fff",
     `font-size:${fontSize}px`,
-    "font-weight:bold",
-    "text-shadow:0 0 4px #000",
+    "font-weight:800",
+    "letter-spacing:0.5px",
+    "text-transform:uppercase",
+    "text-shadow:0 1px 3px rgba(0,0,0,0.8)",
     "user-select:none",
     "-webkit-user-select:none",
     "-webkit-tap-highlight-color:transparent",
     "touch-action:none",
+    "transition:transform 0.08s ease-out,box-shadow 0.12s ease-out,background 0.12s ease-out",
   ].filter(Boolean).join(";");
   return el;
+}
+
+function pressBtn(el: HTMLDivElement, accent: string) {
+  el.style.transform = "scale(0.90)";
+  el.style.background = `radial-gradient(circle at 32% 28%, rgba(255,255,255,0.22), rgba(${accent},0.38) 72%)`;
+  el.style.boxShadow = `0 2px 10px rgba(0,0,0,0.45),inset 0 1px 1px rgba(255,255,255,0.25),0 0 18px rgba(${accent},0.55)`;
+}
+function releaseBtn(el: HTMLDivElement, accent: string) {
+  el.style.transform = "scale(1)";
+  el.style.background = "radial-gradient(circle at 32% 28%, rgba(255,255,255,0.16), rgba(18,19,22,0.6) 72%)";
+  el.style.boxShadow = `0 4px 16px rgba(0,0,0,0.4),inset 0 1px 1px rgba(255,255,255,0.18),0 0 10px rgba(${accent},0.25)`;
 }
 
 export interface MobileControls {
@@ -75,8 +94,11 @@ export function setupMobileControls(
     `width:${JRAD * 2}px`,
     `height:${JRAD * 2}px`,
     "border-radius:50%",
-    "background:rgba(255,255,255,0.07)",
-    "border:2px solid rgba(255,255,255,0.30)",
+    "background:radial-gradient(circle at 35% 30%, rgba(255,255,255,0.10), rgba(18,19,22,0.35) 75%)",
+    "backdrop-filter:blur(6px)",
+    "-webkit-backdrop-filter:blur(6px)",
+    "border:1.5px solid rgba(255,255,255,0.28)",
+    "box-shadow:0 4px 16px rgba(0,0,0,0.35),inset 0 1px 1px rgba(255,255,255,0.12)",
     "touch-action:none",
   ].join(";");
   overlay.appendChild(jBase);
@@ -88,8 +110,9 @@ export function setupMobileControls(
     `width:${KNOB_R * 2}px`,
     `height:${KNOB_R * 2}px`,
     "border-radius:50%",
-    "background:rgba(255,255,255,0.45)",
-    "border:2px solid rgba(255,255,255,0.75)",
+    "background:radial-gradient(circle at 35% 30%, rgba(255,255,255,0.9), rgba(210,214,220,0.55) 75%)",
+    "border:1.5px solid rgba(255,255,255,0.85)",
+    "box-shadow:0 2px 8px rgba(0,0,0,0.35)",
     "transform:translate(-50%,-50%)",
     "top:50%",
     "left:50%",
@@ -104,95 +127,64 @@ export function setupMobileControls(
   }
 
   // ── Fire button (bottom-right) ─────────────────────────────────────────────
+  const FIRE_ACCENT = "255,80,80";
   const FIRE_R = 46;
-  const fireBtn = circle(
-    "24px", null, "24px",
-    FIRE_R * 2,
-    "rgba(255,70,70,0.50)",
-    "rgba(255,120,120,0.80)",
-    "FIRE", 14,
-  );
+  const fireBtn = circle("24px", null, "24px", FIRE_R * 2, FIRE_ACCENT, "FIRE", 14);
   overlay.appendChild(fireBtn);
 
   fireBtn.addEventListener("touchstart", (e) => {
     e.stopPropagation(); e.preventDefault();
-    fireBtn.style.background = "rgba(255,70,70,0.85)";
+    pressBtn(fireBtn, FIRE_ACCENT);
     controller.startFiring();
   }, { passive: false });
   fireBtn.addEventListener("touchend", (e) => {
     e.stopPropagation(); e.preventDefault();
-    fireBtn.style.background = "rgba(255,70,70,0.50)";
+    releaseBtn(fireBtn, FIRE_ACCENT);
     controller.stopFiring();
   }, { passive: false });
   fireBtn.addEventListener("touchcancel", () => {
-    fireBtn.style.background = "rgba(255,70,70,0.50)";
+    releaseBtn(fireBtn, FIRE_ACCENT);
     controller.stopFiring();
   });
 
   // ── Jump button (above fire) ───────────────────────────────────────────────
+  const JUMP_ACCENT = "90,170,255";
   const JUMP_R = 34;
   const jumpBtn = circle(
     `${24 + FIRE_R - JUMP_R}px`, null,
     `${24 + FIRE_R * 2 + 12}px`,
-    JUMP_R * 2,
-    "rgba(80,160,255,0.50)",
-    "rgba(120,190,255,0.80)",
-    "JUMP", 12,
+    JUMP_R * 2, JUMP_ACCENT, "JUMP", 12,
   );
   overlay.appendChild(jumpBtn);
 
   jumpBtn.addEventListener("touchstart", (e) => {
     e.stopPropagation(); e.preventDefault();
-    jumpBtn.style.background = "rgba(80,160,255,0.85)";
+    pressBtn(jumpBtn, JUMP_ACCENT);
     controller.doJump();
   }, { passive: false });
   jumpBtn.addEventListener("touchend", (e) => {
     e.stopPropagation(); e.preventDefault();
-    jumpBtn.style.background = "rgba(80,160,255,0.50)";
+    releaseBtn(jumpBtn, JUMP_ACCENT);
   }, { passive: false });
 
   // ── Reload button (left of fire) ───────────────────────────────────────────
+  const RELOAD_ACCENT = "255,205,70";
   const RELOAD_R = 28;
   const reloadBtn = circle(
     `${24 + FIRE_R * 2 + 12}px`, null,
     `${24 + FIRE_R - RELOAD_R}px`,
-    RELOAD_R * 2,
-    "rgba(255,200,60,0.50)",
-    "rgba(255,220,110,0.80)",
-    "R", 16,
+    RELOAD_R * 2, RELOAD_ACCENT, "R", 16,
   );
   overlay.appendChild(reloadBtn);
 
   reloadBtn.addEventListener("touchstart", (e) => {
     e.stopPropagation(); e.preventDefault();
-    reloadBtn.style.background = "rgba(255,200,60,0.85)";
+    pressBtn(reloadBtn, RELOAD_ACCENT);
     controller.ak47.reload();
   }, { passive: false });
   reloadBtn.addEventListener("touchend", (e) => {
     e.stopPropagation(); e.preventDefault();
-    reloadBtn.style.background = "rgba(255,200,60,0.50)";
-  }, { passive: false });
-
-  // ── Crouch toggle (above joystick) ─────────────────────────────────────────
-  const CROUCH_R = 28;
-  const crouchBtn = circle(
-    null, `${24 + JRAD - CROUCH_R}px`,
-    `${24 + JRAD * 2 + 12}px`,
-    CROUCH_R * 2,
-    "rgba(160,255,160,0.50)",
-    "rgba(180,255,180,0.80)",
-    "CTR", 11,
-  );
-  overlay.appendChild(crouchBtn);
-
-  let crouching = false;
-  crouchBtn.addEventListener("touchstart", (e) => {
-    e.stopPropagation(); e.preventDefault();
-    crouching = !crouching;
-    controller.physics.crouching = crouching;
-    crouchBtn.style.background = crouching
-      ? "rgba(80,200,80,0.85)"
-      : "rgba(160,255,160,0.50)";
+    releaseBtn(reloadBtn, RELOAD_ACCENT);
   }, { passive: false });
 
   return { updateKnob };

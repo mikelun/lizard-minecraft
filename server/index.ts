@@ -56,7 +56,7 @@ class GameRoom extends Room<GameState> {
       this.state.players.forEach((p, id) => {
         positions.push({ id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, tier: p.tier });
       });
-      this.broadcast('tick', positions);
+      this.broadcast('tick', { st: Date.now(), players: positions });
     }, TICK_MS);
 
     this.onMessage('position', (client: Client, msg: { x: number; y: number; z: number; yaw: number }) => {

@@ -11,6 +11,7 @@
 
 import * as THREE from "three";
 import { vsBlock, fsBlock, makeDirBlockMat } from "./blockShader";
+import { fetchWithRetry } from "./fetchRetry";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -42,10 +43,24 @@ const MC_TO_GAME = { dx: 0, dy: 64, dz: 0 };
 
 const texCache = new Map<string, THREE.Texture>();
 
+const _texLoader = new THREE.TextureLoader();
+
 function loadTex(name: string): THREE.Texture {
   const url = `/mc/textures/block/${name}.png`;
   if (texCache.has(url)) return texCache.get(url)!;
-  const t = new THREE.TextureLoader().load(url);
+
+  // A single failed request used to leave this texture blank forever (no retry,
+  // just a console error) — retry a couple of times, updating the same cached
+  // Texture instance in place so meshes already using it pick up the fix.
+  let attempt = 0;
+  const onError = () => {
+    attempt++;
+    if (attempt >= 3) { console.error(`[AllObjects] texture failed after retries: ${url}`); return; }
+    setTimeout(() => {
+      _texLoader.load(url, fresh => { t.image = fresh.image; t.needsUpdate = true; }, undefined, onError);
+    }, 400 * attempt);
+  };
+  const t = _texLoader.load(url, undefined, undefined, onError);
   t.magFilter = THREE.NearestFilter;
   t.minFilter = THREE.NearestFilter;
   // NoColorSpace: Three.js 0.171 defaults TextureLoader to SRGBColorSpace which
@@ -374,8 +389,7 @@ export async function loadAllObjects(scene: THREE.Scene): Promise<THREE.Instance
   const meshes: THREE.InstancedMesh[] = [];
   let data: AllObjects;
   try {
-    const res = await fetch(`/mc/models/all_objects.json?v=${Date.now()}`);
-    if (!res.ok) { console.error("[AllObjects] fetch failed:", res.status); return []; }
+    const res = await fetchWithRetry("/mc/models/all_objects.json");
     data = await res.json() as AllObjects;
   } catch (e) {
     console.error("[AllObjects] error:", e);

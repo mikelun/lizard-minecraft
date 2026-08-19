@@ -24,6 +24,10 @@ import { RemotePlayers } from "./net/RemotePlayers";
 
 const app = document.getElementById("app")!;
 
+// Debug overlay (FPS, position, triangle count, etc.) — off by default, opt in
+// with ?stats=true so regular players don't see developer readouts.
+const SHOW_STATS = new URLSearchParams(location.search).get("stats") === "true";
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -802,29 +806,6 @@ function pushKillFeed(html: string) {
   }, 4600);
 }
 
-// ── Tier / weapon progression banner ──────────────────────────────────────
-const tierBanner = document.createElement('div');
-tierBanner.style.cssText = `
-  position:fixed;bottom:120px;left:50%;transform:translateX(-50%);
-  font-family:'Arial',sans-serif;font-size:11px;letter-spacing:1.5px;
-  text-transform:uppercase;color:rgba(255,255,255,0.5);
-  pointer-events:none;display:none;text-align:center;
-`;
-document.getElementById('app')!.appendChild(tierBanner);
-
-function updateTierBanner() {
-  if (!net.connected || net.localId === '') { tierBanner.style.display = 'none'; return; }
-  const slot = GUN_TIER_SLOTS[net.localTier];
-  const next = net.localTier + 1 < GUN_TIER_SLOTS.length
-    ? WEAPON_NAMES[GUN_TIER_SLOTS[net.localTier + 1]]
-    : 'WIN';
-  tierBanner.style.display = 'block';
-  tierBanner.innerHTML =
-    `<span style="color:#e8b84b;font-weight:bold">${WEAPON_NAMES[slot]}</span>` +
-    `<span style="margin:0 8px;opacity:.4">›</span>` +
-    `<span>${next}</span>` +
-    `<span style="margin-left:10px;opacity:.35">${net.localTier + 1} / ${GUN_TIER_SLOTS.length}</span>`;
-}
 
 // ── HP bar (bottom-left, CS style) ────────────────────────────────────────
 const hpBarWrap = document.createElement('div');
@@ -964,6 +945,11 @@ function exitDeathState() {
 
 net.onEvent = ev => {
   if (ev.t === 'welcome') {
+    // A reconnect gets a fresh session with a fresh peer list — clear out
+    // anything left over from a previous connection first, or stale remote
+    // players (with now-invalid session ids) would linger forever since no
+    // 'leave' event is ever coming for them.
+    remotePlayers.removeAll();
     for (const p of ev.players) remotePlayers.add(p);
     // Teleport to the server-assigned spawn and unfreeze.
     controller.physics.position.set(ev.spawn[0], ev.spawn[1], ev.spawn[2]);
@@ -975,7 +961,6 @@ net.onEvent = ev => {
     setLocalHp(MAX_HP);
     // Force correct weapon immediately so there's no one-frame M16A1 flash.
     controller.weaponIndex = GUN_TIER_SLOTS[net.localTier];
-    updateTierBanner();
   } else if (ev.t === 'join') {
     remotePlayers.add({ id: ev.id, x: ev.x, y: ev.y, z: ev.z, yaw: 0, tier: ev.tier });
   } else if (ev.t === 'leave') {
@@ -989,7 +974,6 @@ net.onEvent = ev => {
       ? '<span style="color:#c94040;font-weight:700">YOU</span>'
       : `<span style="color:rgba(255,255,255,0.55)">#${short(ev.victim)}</span>`;
     pushKillFeed(`${killerLabel}<span style="color:rgba(255,255,255,0.2);margin:0 7px">✕</span>${victimLabel}<span style="color:rgba(255,255,255,0.25);margin-left:8px;font-size:10px;letter-spacing:.5px">${ev.weaponName.toUpperCase()}</span>`);
-    if (ev.victim === net.localId) updateTierBanner();
     if (ev.victim === net.localId) {
       enterDeathState();
     } else {
@@ -998,13 +982,11 @@ net.onEvent = ev => {
   } else if (ev.t === 'win') {
     const label = ev.id === net.localId ? 'VICTORY' : `PLAYER #${ev.id.slice(0,4).toUpperCase()} WINS`;
     pushKillFeed(`<span style="color:#e8b84b;font-weight:700;letter-spacing:2px">${label}</span>`);
-    updateTierBanner();
   } else if (ev.t === 'reset') {
     pushKillFeed('<span style="color:rgba(255,255,255,0.25);letter-spacing:2px;font-size:10px">NEW ROUND</span>');
     net.localTier = 0;
     controller.weaponIndex = GUN_TIER_SLOTS[0];
     exitDeathState();
-    updateTierBanner();
   } else if (ev.t === 'respawn') {
     if (ev.id === net.localId) {
       exitDeathState();
@@ -1020,7 +1002,7 @@ net.onEvent = ev => {
   }
 };
 
-net.onSnapshot = players => remotePlayers.applyTick(players);
+net.onSnapshot = (players, lagMs) => remotePlayers.applyTick(players, lagMs);
 
 net.connect();
 
@@ -1208,19 +1190,21 @@ function tick(now: number) {
   // Totals across both passes (autoReset disabled at init so info accumulates).
   const tris  = renderer.info.render.triangles;
   const calls = renderer.info.render.calls;
-  hud.setDebugText(
-    `FPS ${fps}` +
-    `
+  if (SHOW_STATS) {
+    hud.setDebugText(
+      `FPS ${fps}` +
+      `
 pos  ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}` +
-    `
+      `
 pitch ${pitch.toFixed(4)}  yaw ${yaw.toFixed(4)}` +
-    `
+      `
 spawn.json → {"x":${p.x.toFixed(3)},"y":${p.y.toFixed(3)},"z":${p.z.toFixed(3)},"pitch":${pitch.toFixed(4)},"yaw":${yaw.toFixed(4)}}` +
-    `
+      `
 grounded ${controller.physics.grounded}  block_at[${by}]=${blockAt}` +
-    `
+      `
 triangles ${tris.toLocaleString()}  draw calls ${calls}`,
-  );
+    );
+  }
   hud.setAmmo(ak.ammo, ak.reserve, ak.reloading);
 
   // ── Dynamic crosshair ───────────────────────────────────────────────────────

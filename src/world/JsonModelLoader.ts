@@ -14,6 +14,7 @@
  */
 
 import * as THREE from "three";
+import { fetchWithRetry } from "./fetchRetry";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -278,12 +279,8 @@ export function buildModelGroup(model: ResolvedModel): THREE.Group {
 /** Fetch a model JSON and build a group. Returns null if the fetch fails. */
 export async function loadModelGroup(name: string): Promise<THREE.Group | null> {
   try {
-    const url = `/mc/models/${name}.json?v=${Date.now()}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.error(`[JsonModelLoader] fetch failed: ${url} → ${res.status}`);
-      return null;
-    }
+    const url = `/mc/models/${name}.json`;
+    const res = await fetchWithRetry(url);
     const json = (await res.json()) as ResolvedModel;
     const group = buildModelGroup(json);
     console.log(`[JsonModelLoader] built ${name}: ${group.children.length} elements`);

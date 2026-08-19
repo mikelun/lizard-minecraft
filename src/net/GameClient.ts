@@ -31,8 +31,14 @@ export class GameClient {
   localTier = 0;
   connected = false;
 
-  // Called with an array of 1 player whenever that player's schema state changes.
-  onSnapshot: (players: RemotePlayerData[]) => void = () => {};
+  // Called with the tick's player positions and how stale the tick already was
+  // (ms) by the time we finished processing it — Date.now() at receipt minus
+  // the server's own Date.now() when it generated the broadcast. RemotePlayers
+  // uses this to place the snapshot on ITS OWN performance.now() timeline
+  // instead of trusting raw arrival time, which is noisy whenever ticks arrive
+  // in a bursty (non-evenly-spaced) way — a real source of interpolation
+  // stutter even when the underlying position data is perfectly fine.
+  onSnapshot: (players: RemotePlayerData[], lagMs: number) => void = () => {};
   onEvent:    (event: GameEvent) => void            = () => {};
 
   constructor(url: string) {
@@ -47,9 +53,9 @@ export class GameClient {
       console.log('[GameClient] connected, sessionId:', room.sessionId);
 
       // ── Position snapshots via JSON tick broadcast ──────────────────
-      room.onMessage('tick', (positions: Array<{ id: string; x: number; y: number; z: number; yaw: number; tier: number }>) => {
-        const others = positions.filter(p => p.id !== this.localId);
-        if (others.length > 0) this.onSnapshot(others);
+      room.onMessage('tick', (msg: { st: number; players: Array<{ id: string; x: number; y: number; z: number; yaw: number; tier: number }> }) => {
+        const others = msg.players.filter(p => p.id !== this.localId);
+        if (others.length > 0) this.onSnapshot(others, Date.now() - msg.st);
       });
 
       // ── Game events ─────────────────────────────────────────────────
@@ -86,7 +92,13 @@ export class GameClient {
 
       room.onLeave(() => {
         this.connected = false;
-        console.log('[GameClient] disconnected');
+        this._room = null;
+        console.log('[GameClient] disconnected, retrying in 3s');
+        // A dropped connection (server restart, network blip, etc.) only
+        // stopped here before — the initial-attempt retry below never fires
+        // for a room that HAD connected and then lost it. Reconnect the
+        // same way: attempt a fresh joinOrCreate after a short delay.
+        setTimeout(() => this.connect(), 3000);
       });
 
     }).catch((err: Error) => {
