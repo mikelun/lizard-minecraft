@@ -278,15 +278,20 @@ export function isObjectSolidCell(x: number, y: number, z: number): boolean {
   return objectSolidCells.has(`${x},${y},${z}`);
 }
 
-// Marks the cells a rotated/thin entity ACTUALLY occupies, not just the axis-aligned
-// bounding box of its rotated corners. A blanket AABB fill badly over-blocks anything
-// rotated off-axis or thin (e.g. a door-shaped panel at a diagonal facing) — its AABB
-// can cover several times the entity's real footprint. Instead, every candidate cell
-// (found via the AABB, cheap to compute) is tested by transforming its center into the
-// entity's local unit-cube space: only cells whose center actually falls inside the
-// true rotated box get marked solid.
-const _aabbCorner = new THREE.Vector3();
-const _localPt     = new THREE.Vector3();
+// Marks the cells a rotated/scaled entity ACTUALLY overlaps, not just the axis-aligned
+// bounding box of its rotated corners (which badly over-blocks anything rotated
+// off-axis — its AABB can cover several times the entity's real footprint) and not
+// just cells whose exact center falls inside it (which under-blocks anything smaller
+// than a full block — many decorative block_display props are scaled well below 1,
+// so their box can slip entirely between cell centers and never get marked at all).
+//
+// Real box-box overlap: for each candidate cell (found via the world-space AABB,
+// cheap to compute), transform the cell's 8 corners into the entity's local unit-cube
+// space and check whether that local range overlaps [-0.5,0.5]^3. This marks a cell
+// solid whenever ANY part of it touches the true rotated/scaled box — matching what's
+// on screen — without inflating to the loose world-space AABB.
+const _aabbCorner  = new THREE.Vector3();
+const _cellCorner  = new THREE.Vector3();
 const _invMatrix   = new THREE.Matrix4();
 function markSolidAABB(matrix: THREE.Matrix4) {
   let minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -309,10 +314,23 @@ function markSolidAABB(matrix: THREE.Matrix4) {
   for (let x = x0; x <= x1; x++) {
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
-        _localPt.set(x + 0.5, y + 0.5, z + 0.5).applyMatrix4(_invMatrix);
-        if (Math.abs(_localPt.x) <= 0.5 && Math.abs(_localPt.y) <= 0.5 && Math.abs(_localPt.z) <= 0.5) {
-          objectSolidCells.add(`${x},${y},${z}`);
+        let lMinX = Infinity, lMinY = Infinity, lMinZ = Infinity;
+        let lMaxX = -Infinity, lMaxY = -Infinity, lMaxZ = -Infinity;
+        for (let c = 0; c < 8; c++) {
+          _cellCorner.set(
+            x + ((c & 1) ? 1 : 0),
+            y + ((c & 2) ? 1 : 0),
+            z + ((c & 4) ? 1 : 0),
+          ).applyMatrix4(_invMatrix);
+          lMinX = Math.min(lMinX, _cellCorner.x); lMaxX = Math.max(lMaxX, _cellCorner.x);
+          lMinY = Math.min(lMinY, _cellCorner.y); lMaxY = Math.max(lMaxY, _cellCorner.y);
+          lMinZ = Math.min(lMinZ, _cellCorner.z); lMaxZ = Math.max(lMaxZ, _cellCorner.z);
         }
+        const overlaps =
+          lMaxX >= -0.5 && lMinX <= 0.5 &&
+          lMaxY >= -0.5 && lMinY <= 0.5 &&
+          lMaxZ >= -0.5 && lMinZ <= 0.5;
+        if (overlaps) objectSolidCells.add(`${x},${y},${z}`);
       }
     }
   }
