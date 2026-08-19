@@ -2,10 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- iOS: fullscreen when launched from a home-screen icon (no in-page trigger
+         exists for that path — Safari only grants Fullscreen API access to a real
+         user gesture, which the "TAP TO PLAY" overlay in main.ts handles instead). -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <title>lizard-minecraft</title>
     <style>
-      html, body { margin: 0; padding: 0; overflow: hidden; background: #000; }
+      html, body { margin: 0; padding: 0; overflow: hidden; background: #000; overscroll-behavior: none; }
       #app { position: fixed; inset: 0; }
     </style>
   </head>

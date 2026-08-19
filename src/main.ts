@@ -884,6 +884,37 @@ document.getElementById('app')!.appendChild(connectingOverlay);
 controller.physics.flying  = true;
 controller.physics.velocity.set(0, 0, 0);
 
+// ── Mobile fullscreen prompt ────────────────────────────────────────────────
+// Browsers only grant the Fullscreen API in response to a real user gesture —
+// it can't be requested on page load. Chrome on Android honors this
+// reliably; iOS Safari added Fullscreen API support for regular elements in
+// 16.4+ and silently no-ops on older versions (falls back to whatever the
+// browser chrome normally does — no worse than before).
+if (controller.isMobile) {
+  const fsPrompt = document.createElement('div');
+  fsPrompt.style.cssText = `
+    position:fixed;inset:0;background:#0d0e10;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;z-index:600;
+    font-family:'Arial',sans-serif;gap:16px;touch-action:none;
+  `;
+  fsPrompt.innerHTML = `
+    <div style="font-size:24px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#fff">LIZARD</div>
+    <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.45)">Tap to play</div>
+  `;
+  document.getElementById('app')!.appendChild(fsPrompt);
+
+  const enterFullscreen = () => {
+    const el = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+    const request = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el);
+    request?.()?.catch?.(() => {});
+    fsPrompt.remove();
+  };
+  fsPrompt.addEventListener('touchend', (e) => { e.preventDefault(); enterFullscreen(); }, { passive: false });
+  fsPrompt.addEventListener('click', enterFullscreen);
+}
+
 // ── Death screen ───────────────────────────────────────────────────────────
 const deathScreen = document.createElement('div');
 deathScreen.style.cssText = `
