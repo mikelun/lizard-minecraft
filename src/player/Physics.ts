@@ -115,7 +115,6 @@ export class PlayerPhysics {
 
   // Pre-allocated temporaries — reused every frame to avoid GC pressure.
   private readonly _tmpA  = new THREE.Vector3();
-  private readonly _tmpB  = new THREE.Vector3();
   private readonly _tmpC  = new THREE.Vector3();
   private readonly _aabb: AABB = { minX:0, minY:0, minZ:0, maxX:0, maxY:0, maxZ:0 };
 
@@ -241,60 +240,57 @@ export class PlayerPhysics {
       return;
     }
 
-    // Blocked -- try stepping up onto a ledge up to STEP_HEIGHT tall BEFORE
-    // falling back to a partial slide-to-flush.
-    // _tmpB = raised position, _tmpC = raised + moved along axis
-    this._tmpB.copy(this.position);
-    this._tmpB.y += STEP_HEIGHT;
-    this._tmpC.copy(this._tmpB);
-    this._tmpC[axis] += delta;
+    // Blocked at current height. Only auto-step when grounded — prevents
+    // airborne clipping against stair sides or half-block edges from
+    // teleporting the player upward.
+    if (!this.grounded) {
+      const safeFraction = this.maxSafeFraction(axis, delta);
+      if (safeFraction > 0.001) this.position[axis] += delta * safeFraction;
+      return;
+    }
 
-    if (!this.collides(this.aabbAt(this._tmpB)) && !this.collides(this.aabbAt(this._tmpC))) {
-      // Only auto-step/jump when grounded — prevents airborne clipping against
-      // stair sides or half-block edges from teleporting the player upward.
-      if (!this.grounded) {
-        const safeFraction = this.maxSafeFraction(axis, delta);
-        if (safeFraction > 0.001) this.position[axis] += delta * safeFraction;
+    // Search downward from the max step height for the highest Y at the
+    // forward position that's actually clear — rather than first gating on
+    // whether the player's FULL box clears a full STEP_HEIGHT raise. That
+    // gate over-rejects a real, walkable small step (e.g. a 0.5-tall slab):
+    // whenever the ceiling clearance is enough for the ACTUAL step but less
+    // than the full STEP_HEIGHT constant, the old gate saw a collision at
+    // the inflated test height and never even looked for the real landing
+    // spot, reading as "player needs more than 2 blocks of headroom" for
+    // what was really just a slab step under a low ceiling.
+    let landY: number | null = null;
+    for (let testY = this.position.y + STEP_HEIGHT; testY > this.position.y + 1e-6; testY -= 0.05) {
+      this._tmpC.copy(this.position);
+      this._tmpC.y = testY;
+      this._tmpC[axis] += delta;
+      if (!this.collides(this.aabbAt(this._tmpC))) { landY = testY; break; }
+    }
+
+    if (landY === null) {
+      const safeFraction = this.maxSafeFraction(axis, delta);
+      if (safeFraction > 0.001) {
+        this.position[axis] += delta * safeFraction;
         return;
       }
-
-      // Find the exact top of the ledge.
-      let landY = this._tmpC.y;
-      const baseY = this._tmpC.y;
-      for (let dyStep = 0.05; dyStep <= STEP_HEIGHT; dyStep += 0.05) {
-        const testY = baseY - dyStep;
-        if (testY <= this.position.y) break;
-        this._tmpA.copy(this._tmpC);
-        this._tmpA.y = testY;
-        if (this.collides(this.aabbAt(this._tmpA))) break;
-        landY = testY;
-      }
-      const needed = landY - this.position.y;
-
-      if (needed <= 0.55) {
-        // Half-block step (slab, stair top): snap position so horizontal movement
-        // isn't stalled, then let smoothY glide the camera up slowly.
-        this.position.y = landY;
-        this.position[axis] = this._tmpC[axis];
-        this._stepping = true;
-        if (this.velocity.y < 0) this.velocity.y = 0;
-      } else {
-        // Full-block ledge: force a jump so the player hops over naturally.
-        if (this.velocity.y <= 0) {
-          this.velocity.y = JUMP_FORCE;
-          this._stepping = false;
-        }
-      }
+      this.velocity[axis] = 0;
       return;
     }
 
-    const safeFraction = this.maxSafeFraction(axis, delta);
-    if (safeFraction > 0.001) {
-      this.position[axis] += delta * safeFraction;
-      return;
+    const needed = landY - this.position.y;
+    if (needed <= 0.55) {
+      // Half-block step (slab, stair top): snap position so horizontal movement
+      // isn't stalled, then let smoothY glide the camera up slowly.
+      this.position.y = landY;
+      this.position[axis] += delta;
+      this._stepping = true;
+      if (this.velocity.y < 0) this.velocity.y = 0;
+    } else {
+      // Full-block ledge: force a jump so the player hops over naturally.
+      if (this.velocity.y <= 0) {
+        this.velocity.y = JUMP_FORCE;
+        this._stepping = false;
+      }
     }
-
-    this.velocity[axis] = 0;
   }
 
   private checkGrounded(): boolean {
