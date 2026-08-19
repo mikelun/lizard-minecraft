@@ -19,7 +19,6 @@ import { raycastWithNormal } from "./world/raycast";
 import { spawnBulletHole } from "./world/BulletHoles";
 import { setupMobileControls, type MobileControls } from "./ui/mobileHud";
 import { buildGeoModel, GeckoAnimator } from "./world/GeckoLibGun";
-import { SteveCharacter } from "./world/SteveCharacter";
 import { GameClient } from "./net/GameClient";
 import { RemotePlayers } from "./net/RemotePlayers";
 
@@ -727,33 +726,6 @@ loadPointBlankGun(gunSlots[5], "LAMG",
 );
 
 
-// TACZ M16A1 at 0.45 matches PB AK47 proportions (TACZ models are 2.25× smaller internally)
-// PB pistols/SMGs at 0.20 and rifles at 0.20 match that same reference scale
-const BOT_WEAPONS = [
-  { geo: "/tacz/models/m16a1_geo.json",          tex: "/tacz/textures/m16a1.png",          scale: 0.45 },
-  { geo: "/pointblank/models/deserteagle.geo.json", tex: "/pointblank/textures/deserteagle.png", scale: 0.20 },
-  { geo: "/pointblank/models/mp7.geo.json",       tex: "/pointblank/textures/mp7.png",       scale: 0.20 },
-  { geo: "/pointblank/models/p90.geo.json",       tex: "/pointblank/textures/p90.png",       scale: 0.20 },
-  { geo: "/pointblank/models/ballista.geo.json",  tex: "/pointblank/textures/ballista.png",  scale: 0.20 },
-  { geo: "/pointblank/models/lamg.geo.json",      tex: "/pointblank/textures/lamg.png",      scale: 0.20 },
-];
-
-// ── SWAT Steve (CT side) ─────────────────────────────────────────────────────
-const steveCharacter = new SteveCharacter();
-steveCharacter.root.position.set(-7, 5.0, 46);
-scene.add(steveCharacter.root);
-steveCharacter.equipSwatArmor();
-steveCharacter.startWeaponCycle(BOT_WEAPONS, 5);
-steveCharacter.aiming = true;
-
-// ── Terrorist Steve (T side) — offset start so they don't swap in sync ────────
-const steveT = new SteveCharacter();
-steveT.root.position.set(-7, 5.0, 43);
-scene.add(steveT.root);
-steveT.equipArmor("/marbled/military_armor.geo.json", "/marbled/desert_military_armor.png");
-// Start terrorist's cycle at a different weapon so they're never holding the same gun
-steveT.startWeaponCycle([...BOT_WEAPONS.slice(3), ...BOT_WEAPONS.slice(0, 3)], 5);
-steveT.aiming = true;
 
 // ── Mobile controls (touch devices only) ─────────────────────────────────────
 let mobileControls: MobileControls | null = null;
@@ -1148,16 +1120,6 @@ function tick(now: number) {
     }
     animator.update(dt);
   }
-  // Face Steve toward the player
-  const steveDx = controller.physics.position.x - steveCharacter.root.position.x;
-  const steveDz = controller.physics.position.z - steveCharacter.root.position.z;
-  const steveYaw = Math.atan2(-steveDx, -steveDz);
-  steveCharacter.update(dt, true, steveYaw);
-
-  const steveTDx = controller.physics.position.x - steveT.root.position.x;
-  const steveTDz = controller.physics.position.z - steveT.root.position.z;
-  steveT.update(dt, true, Math.atan2(-steveTDx, -steveTDz));
-
   lizardSwarm.update(dt, MAP_MIN_X, MAP_MAX_X, MAP_MIN_Z, MAP_MAX_Z);
 
   // ── Multiplayer: send position + update remote player characters ───────────
