@@ -410,7 +410,7 @@ function spawnLizardGhost(worldPos: THREE.Vector3) {
   document.body.appendChild(wrap);
 
   let t = 0;
-  const DURATION = 4.5; // slow, deliberate rise
+  const DURATION = 8; // slow, deliberate rise
   const RISE_PX  = 130;
   const tick = (dt2: number) => {
     t += dt2;
