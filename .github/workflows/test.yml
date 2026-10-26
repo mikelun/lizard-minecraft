@@ -1,0 +1,52 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - name: Typecheck (client + server)
+        run: npm run typecheck
+      - name: Build server
+        run: npm run build:server
+      - name: Unit + server tests
+        run: npm test
+      - name: Build client
+        run: npx vite build --target esnext
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build client image
+        run: docker build -t lizard-minecraft-client .
+      - name: Build server image
+        run: docker build -f server/Dockerfile -t lizard-minecraft-server .
+      - name: Server image starts
+        run: |
+          docker run -d --name gs -p 9001:9001 lizard-minecraft-server
+          for i in $(seq 1 20); do
+            docker logs gs 2>&1 | grep -q listening && exit 0
+            sleep 1
+          done
+          docker logs gs
+          exit 1
